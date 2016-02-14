@@ -1,0 +1,599 @@
+Interne Repräsentation von Datentypen
+-------------------------------------
+
+Last modified: 31.03.2005
+
+
+
+
+Es wird ein Array unterhalten der Art
+
+struct dataType *dt;
+
+wobei
+
+struct dataType
+{
+	/*
+		Datentyp, d.h. INT, CHAR, LONG, FLOAT, DOUBLE, BOOL, aber auch
+		struct, union, ...
+	*/
+	int		type;
+
+	//signed oder unsigned
+	bool	isSigned;
+
+	//konstant
+	bool	isConst;
+
+	//Zeiger
+	bool	isPointer;
+
+	/*
+		Wenn es eine lokale Variable ist, deren Offset zum Stack-Frame.
+		Ist es eine Variable in einer Struktur, deren Offset bzgl. des Strukturbeginns.
+	*/
+	int		offset;
+};
+
+
+Der Index in diesem Array dt wird in die Symboltabelle eingetragen. Handelt es sich um eine
+Struktur, so wird in dem Symboltabellen-Eintrag ein Zeiger auf eine Struktur gesetzt, in dem
+ein Array mit den Indices bzgl. dataType.
+
+
+
+
+Zugriff auf ein Struktur-Element
+--------------------------------
+
+Sei
+
+struct a
+{
+	int		elem1;
+	long	elem2;
+};
+
+BLOCK
+{
+	struct a struct1;
+	struct a *struct2;
+}
+
+
+kein Zeiger
+-----------
+
+Zugriff auf elem2:
+
+struct1.elem2 = 10;
+
+
+Lade die Adresse der Struktur in ein Adressregister,
+
+lea.l	x(sp),a0		;struct1
+move.l	#10,4(a0)		;schreibe 10 nach elem2
+
+
+
+
+Zeiger
+------
+
+Lade die Adresse der Struktur in ein Adressregister,
+
+lea.l	x(sp),a0		;struct2
+Da struct2 ein Zeiger auf eine Struktur struct a ist, lade die Adresse
+
+move.l	(a0),a0
+Nun ganz normal zugreifen auf die Elemente von struct2.
+
+
+
+
+Zugriff auf lokale Variablen in einem anderen Block
+---------------------------------------------------
+
+BLOCK 1
+{
+	long	a, b, c;
+
+	BLOCK 2
+	{
+		long	d, e;
+
+		a = e;
+
+		long	i, j;
+	}
+
+	long	f, g;
+}
+
+
+Dann suche a, ist in Block 1, e in Block 2, d.h. Differenz 1.
+Hole vom Stack für die Anzahl der lokalen Variablen den Offset von a.
+Zwar kann später auch noch etwas hinzukommen, wie f und g, aber die sind ja im Block 2
+noch nicht zu sehen. Also haben diese keinen Einfluss auf den Block 2.
+
+Stack in Block 2
+----------------
+
+So sieht der Stack aus:
+
+------------------------------------
+| sp = 380 | e                     |
+------------------------------------
+|      384 | d                     |
+------------------------------------
+|      388 | c                     |
+------------------------------------
+|      392 | b                     |
+------------------------------------
+|      396 | a                     |
+------------------------------------
+|      400 |                       |
+------------------------------------
+
+Der Offset zu den lokalen Variablen des 1. Blocks ist noch nicht sicher, da i und j
+ja noch nicht gesehen wurden. Also erst später eintragen, wenn alles erkannt wurde.
+Also z.B.
+
+move.l	BlockOffset1(sp),a0
+move.l	e(sp),(a0)
+
+Der Offset für e ist ja auch noch nicht bekannt, da i und j ja noch nicht
+gesehen wurden.
+Dieses nachträgliche Einsetzen der Offsets muss mit Hilfe eines Arrays passieren,
+in dem Objekte vom Typ Node oder LEaf abgelegt wurden. Bevor Code erzeugt wird,
+werden die Offsets eingetragen, da sie dann ja bekannt sind.
+
+
+
+
+
+
+
+
+
+
+
+
+Register
+--------
+
+
+Der Syntaxbaum für c=a*b sieht so aus:
+
+
+    =,d1
+   / \
+  /   \
+ /     \
+c       *,d1
+       / \
+      /   \
+     /     \
+    a,d0    b,d1
+
+move	a,d0
+move	b,d1
+mul		d0,d1
+move	d1,c
+
+Wenn aber a ein float ist, aber b ein int, dann muss eine implizite Typkonvertierung
+vorgenommen werden.
+
+Dann
+fmove	a,fp0
+move	b,d0
+fmove	d0,fp1
+fmul	fp0,fp1
+move	c,a0		;Adresse von c nach a0
+fmove	fp1,(a0)	;Ergebnis der Multiplikation nach c
+
+
+
+
+Expressions
+-----------
+
+Es gibt expressions, die ein Ergebnis zurückliefern und solche, die kein direktes
+Ergebnis zurückliefern.
+
+Bsp:
+
++, -, *, /, % liefern Ergebnisse zurück, wobei dieses in einem Register abgelegt wird. Dieses
+Register wird in dem Operatorknoten eingetragen.
+
+Hingegen liefern die relational operators
+
+<, <=, >, >=, !=, == kein direktes Ergebnis zurück, vielmehr setzen sie die condition codes
+im Statusregister.
+
+
+If-Statement
+------------
+
+if( expr )
+	code1
+
+else
+	code2
+
+Zuerst wird expression geprüft, wenn es ein Operatorknoten ist, dann steht das Ergebnis in einem
+Datenregister. Dieses wird freigegeben und die condition codes werden geprüft.
+
+if( a * b )
+
+        *,d1
+       / \
+      /   \
+     /     \
+    a,d0    b,d1
+
+move	a,d0
+move	b,d1
+mul		d0,d1
+
+if
+--
+
+scc.b	d0
+bne/beq
+
+
+Anders bei Zuweisungen, also
+
+a = b * c;
+
+move	b,d0
+move	c,d1
+mul		d0,d1
+move	d1,a
+
+
+Aber
+----
+
+bool a = a * b;
+
+move	b,d0
+move	c,d1
+mul		d0,d1
+
+Da boolean, mache
+
+scc.b	d1
+move	d1,a
+
+Wäre a kein Boolean, dann ganz normal
+move	d1,a
+
+
+Beim If-Statement wird das Ergebnis von expr als Objekt vom Typ boolean
+betrachtet! Auch bei der Zuweisung an einen boolean-Typ.
+
+
+Das Ergebnis von relationalen Operatoren <, <=, >, >=, !=, == ist IMMER
+vom Typ boolean!
+
+Wenn aber
+
+int	a, b, c;
+
+c = a < b;
+
+dann
+
+move	a,d0
+move	b,d1
+cmp		d0,d1
+scc		d1		;immer ausgeben bei boolean!
+extb.l	d1
+move	d1,c
+
+
+Wenn aber
+
+bool	c;
+int		a, b;
+
+
+c = a<b;
+
+dann
+
+move	a,d0
+move	b,d1
+cmp		d0,d1
+scc.b	d1		;immer ausgeben bei boolean!
+move.b	d1,c
+
+
+Nun kann man entweder IMMER bei den Knoten <, <=, !=, ==, >, >=, ... den Code
+scc.b dx ausgeben, und das Datenregister dx in den Knoten eintragen, oder
+nur nach Bedarf, denn scc wird ja z.B. bei if nicht benötigt!
+
+
+
+Wenn z.B. bei einer Zuweisung das Ergebnis kein Boolean ist, aber einem zugewiesen werden soll,
+also
+
+int		a = 1, b = 2;
+bool	c;
+
+c = a << b;
+
+dann
+
+move	a,d0
+move	b, d1
+asl		d1,d0
+tst		d0
+sne.b	d0
+move.b	d0,c
+
+
+Wenn das Ergebnis keinem Boolean zugewiesen werden soll, dann
+
+move	a,d0
+move	b, d1
+asl		d1,d0
+move	d0,c
+
+
+
+Bei Zuweisung "erg = expr" geht es also darum:
+
+- von welchem Typ ist expr, bool oder anders?
+- von welchem Typ ist erg, bool oder anders?
+
+Dies gibt vier mögliche Kombinationen:
+
+1.
+	erg = bool, expr = bool
+	Sei c = a != b;
+
+	move	a,d0
+	move	b,d1
+	move.b	#0,d2	;setze das Ergebnis auf false
+	cmp		d0,d1
+	beq		l1
+	move.b	#1,d2	;a und b sind ungleich, also true
+l1:
+	move.b	d2,c
+
+
+oder
+
+
+1.
+	erg = bool, expr = bool
+	Sei c = a && b;
+
+	Dann
+
+	move	a,d0
+	move	b,d1
+	move	#0,d2	;setze c auf false
+	cmp		#0,d0	;ist a false?
+	beq		l1		;a ist false
+	cmp		#0,d1	;ist b false?
+	beq		l1		;b ist false
+	move	#1,d2	;c ist true
+l1:
+	move	d2,c
+
+
+oder
+
+
+1.
+	erg = bool, expr == bool
+	c = a < b;
+
+	move	a,d0
+	move	b,d1
+	cmp		d0,d1
+	slt.b	d2		;Ergebnis
+	move.b	d2,c
+
+Wenn also das Ergebnis der rechten Seite, also expr, vom Typ boolean ist,
+dann kann man, wenn erg auch vom Typ boolean ist, das Ergebnis einfach übernehmen.
+
+
+2.
+	erg = bool, expr != bool
+	c = a << b;
+
+	move	a,d0
+	move	b,d1
+	asl		d0,d1
+;Ergebnis ist kein bool, also in bool wandeln, Ergebnis steht in d1
+
+	tst		d1
+	scc.b	d1
+	move.b	d1,c
+
+
+oder
+
+2.
+	erg = bool, expr != bool
+	c = a * b;
+
+	move	a,d0
+	move	b,d1
+	mul		d0,d1
+;Ergebnis nun in d1
+
+	tst		d1
+	bne		d1
+	move	d1,c
+
+
+
+3.
+
+	erg != bool, expr == bool
+	c = a != b
+
+	move	a,d0
+	move	b,d1
+	move.b	#0,d2	;setze das Ergebnis auf false
+	cmp		d0,d1
+	beq		l1
+	move.b	#1,d2	;a und b sind ungleich, also true
+l1:
+
+;Ergebnis ist vom Typ bool in d2
+	ext.w	d2
+	move.w	d2,c
+
+
+
+4.
+
+	erg != bool, expr != bool
+
+	normal, nur casten, eigentlich auch bei 3.
+
+Die Typen 3 und 4 brauchen also gar nicht unterschieden werden.
+
+
+
+
+
+
+
+
+
+
+
+
+If-Code
+-------
+
+expr = a < b;
+
+if( expr )
+	code1
+else
+	code2
+
+expr-Knoten ==  <: bge
+expr-Knoten == <=: bgt
+expr-Knoten ==  >: ble
+expr-Knoten == <=: blt
+expr-Knoten == ==: bne
+expr-Knoten == !=: beq
+
+
+
+Wenn also
+
+if( a < b )
+
+move	a,d0
+move	b,d1
+cmp		d0,d1
+slt		d1		;Ergebnis von Knoten <
+
+Nun if-Teil
+-----------
+tst		d1
+bne		else-Teil
+if-Teil
+
+
+So gibt es beim Sprung nur noch beq oder bne.
+
+
+Die Anweisung
+
+cmp		d0,d1
+slt		d1
+tst		d1
+bne		l1
+
+kann später von einem Peephole-Optimierer transformiert werden in
+cmp		d0,d1
+bne		l1
+
+
+
+
+
+
+
+
+
+c = a && b
+----------
+
+Beim &&-Knoten müssen beide Kinder (a und b) vom Typ bool sein.
+Das Ergebnis ist auch vom Typ bool.
+
+
+- evntl. a und b auf bool casten
+- a = d0, b = d1
+- d2 = getFreeDataRegister( bool )
+- move.b	#0,d2						;auf false setzen
+- cmp.b		#0,d0
+- beq		L1
+- cmp.b		#0,d1
+- beq		L1
+- move.b	#1,d2						;auf true setzen
+L1:
+- nop
+
+d2 ist das Ergebnis
+
+
+
+c = a || b
+----------
+
+Beim &&-Knoten müssen beide Kinder (a und b) vom Typ bool sein.
+Das Ergebnis ist auch vom Typ bool.
+
+
+- evntl. a und b auf bool casten
+- a = d0, b = d1
+- d2 = getFreeDataRegister( bool )
+- move.b	#0,d2						;auf false setzen
+- cmp.b		#0,d0
+- bne		L2
+- cmp.b		#0,d1
+- bne		L2
+- bra		L1
+L2:
+- move.b	#1,d2						;auf true setzen
+L1:
+- nop
+
+d2 ist das Ergebnis
+
+
+c = !a
+------
+
+Logisches nicht.
+Wenn a true, dann !a=false und umgekehrt.
+
+Beim !-Knoten müssen beide Kinder (a und b) vom Typ bool sein.
+Das Ergebnis ist auch vom Typ bool.
+
+
+- evntl. a auf bool casten
+- a = d0
+- d1 = getFreeDataRegister( bool )
+- cmp.b		#0,d0	;false?
+- seq.b		d1		;auf true setzen, wenn vorher false
+
+d1 ist das Ergebnis
+
+
+

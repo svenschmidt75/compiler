@@ -1,0 +1,21 @@
+;Grammatik auf Drache S 230
+
+%grammar
+
+E	->	T E1
+	;
+
+E1	->	'ADD' T E1
+	|	'EPSILON'
+	;
+
+T	->	F T1
+	;
+
+T1	->	'MUL' F T1
+	|	'EPSILON'
+	;
+
+F	->	'KLOPEN' E 'KLCLOSE'
+	|	'IDENT'
+	;

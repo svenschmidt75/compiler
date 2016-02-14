@@ -1,0 +1,3128 @@
+/*
+	Dies ist die sslex-Grammatik. Ich habe sie dem GNU-flex-Scanner-Projekt entnommen und an meinen LR-Parser-Generator
+	SSLR angepast.
+	2003 by Sven Schmidt
+	sschmidt@physik.uni-bremen.de
+*/
+
+
+%union
+{
+	//Strings
+	char	*name;
+	
+	int		i;
+
+	//Charakter-Klassen
+	int		*cclClass;
+
+	//simples Zeichen
+	char	character;
+
+	//long
+	long	l;
+
+	//NEA_STR
+	NEA_STR	*neaStr;
+}
+
+
+%definition
+
+//Den Terminalen und den Nicht-Terminalen semantische Typen zufügen.
+%ntermType <i> scon scon_stk_ptr
+%ntermType <neaStr> re re2 rule series singleton string flexrule
+%ntermType <cclClass> fullccl ccl ccl_expr
+%termType <name> NAME
+%termType <neaStr> ANY
+%termType <character> CHAR
+%termType <l> NUMBER
+
+
+%grammar
+
+
+
+//Haupt-Regel von SSLEX
+goal				:	initlex sect1 sect2 initforrule
+\{
+	//Ende
+\}
+					;
+
+//Dient der Initialisierung von SSLEX, wird aufgerufen, bevor irgend etwas gemacht wird
+initlex				:	'EPSILON'
+\{
+	//SSLEX initialisieren
+
+	//SC INITIAL eintragen
+	insertSC( "INITIAL", false );
+
+	//7- oder 8-Bit-Scanner
+	cclWidth = argv_str->cclWidth;
+
+
+	//noch keine NEA_STR auf Stack
+	neaStackCnt = 0;
+	neaStackMax = 0;
+	neaStack = 0L;
+
+	//SC-Stack
+	scStack = 0L;
+
+	//Speicher für NEA-Stack anfordern
+	extendNEAStack();
+
+	//keine Lookahead-Rules
+	laUsed = false;
+
+	//keine begin-of-line-Rules
+	begLineUsed = false;
+
+	//Regeln zählen
+	ruleCnt = 0;
+\}
+					;
+
+sect1				:	'DEF' scsect1
+\{
+	//ab hier müssen alle SC definiert sein, nun Speicher für den SC-Stack anfordern
+	scStack = new( SC_STR *[scStrAnz] );
+	scStackPos = 0;
+\}
+					|	'EPSILON'
+					;
+
+//Haupt-Regel für die Definition der (incluive/exclusive) Start-Conditionen
+scsect1				:	scsect1 startconddecl namelist1
+
+//Es gibt keine Start-Condition-Definitionen seitens des Benutzers
+					|	'EPSILON'
+					;
+
+//Ist eine inclusive-Start-Condition
+startconddecl		:	'SCDECL'
+\{
+	//ist eine inclusive SC
+	xcluSC = false;
+\}
+
+//Ist eine exclusive-Start-Condition
+					|	'XSCDECL'
+\{
+	//ist eine exclusive SC
+	xcluSC = true;
+\}
+					;
+
+/*
+	Es können auch mehrere Namen von Start-Conditionen folgen, also
+	%s SC1 SC2 SC3 ..
+*/
+namelist1			:	namelist1 'NAME'
+\{
+	//den Namen einer SC eintragen
+	insertSC( $2, xcluSC );
+\}
+					|	'NAME'
+\{
+	//den Namen einer SC eintragen
+	insertSC( $1, xcluSC );
+\}
+					;
+
+sect2				:	'SPEC' sc2
+					|	'EPSILON'
+					;
+
+//Parsed einen regulären Ausdruck, inklusive Angabe von Start-Conditionen
+sc2					:	sc2 scon initforrule flexrule 'NEWLINE'
+\{
+	//Position auf dem SC-Stack zurückgeben
+	scStackPos = $2;
+\}
+
+//Diese Regel erlaubt die verschachtelte Benutzung der Start-Conditionen
+					|	sc2 scon 'BOPEN' sc2 'BCLOSE'
+\{
+	//Position auf dem SC-Stack zurückgeben
+	scStackPos = $2;
+\}
+
+//kein regulärer Ausdruck
+					|	'EPSILON'
+					;
+
+//Das Erkennen eines regulären Ausdrucks initialisieren
+initforrule			:	'EPSILON'
+\{
+	//es folgt ein reg. Ausdruck
+
+	//erst einmal kein Lookahead-NEA
+	trailingContext = false;
+\}
+					;
+
+//regulärer Ausdruck
+flexrule			:	'BEGLINE' rule
+\{
+	NEA_STR	*nea = $2;
+	int		i;
+
+	//Regeln zählen
+	ruleCnt++;
+
+	//begin-of-line-Rules benutzt
+	begLineUsed = true;
+
+	//NEA darf nur am Anfang einer Zeile stehen
+	nea->begLine = true;
+
+	//die auszuführende Aktion holen
+	nea->action = s->getAction();
+
+	//den reg. Ausdruck als Text holen
+	nea->regText = s->getRegText( nea->line );
+
+
+	//Nun den NEA in die SC eintragen
+	if( scStackPos )
+	{
+		//alle SC auf dem Stack
+		for( i = 0; i < scStackPos; i++ )
+			//eintragen
+			insertSC( scStack[i], nea );
+	}
+
+	else
+		//es wurden keine SC angegeben, d.h. in alle inclusive SC eintragen
+		insertInclSC( nea );
+
+
+	//Aktion |, d.h. die auszuführende Aktion folgt später?
+	if( nea->action[0] == '|' )
+		//Ja, NEA auf Stack
+		insertNEAStack( nea );
+
+	else
+	{
+		//Aktion auch an andere NEAen weitergeben?
+		if( neaStackCnt )
+		{
+			//Ja, Aktion an alle NEAen weitergeben, die auf dem NEA-Stack sind
+			for( i = 0; i < neaStackCnt; i++ )
+			{
+				//den Speicher der alten Aktion freigeben
+				delete[] ( neaStack[i]->action );
+
+				//anhängen
+				neaStack[i]->action = nea->action;
+			}
+
+			//Stack löschen
+			neaStackCnt = 0;
+		}
+	}
+
+	//auf Stack
+	$$ = nea;
+\}
+					|	rule
+\{
+	NEA_STR	*nea = $1;
+	int		i;
+
+	//Regeln zählen
+	ruleCnt++;
+
+	//die auszuführende Aktion holen
+	nea->action = s->getAction();
+
+	//den reg. Ausdruck als Text holen
+	nea->regText = s->getRegText( nea->line );
+
+
+	//Nun den NEA in die SC eintragen
+	if( scStackPos )
+	{
+		//alle SC auf dem Stack
+		for( i = 0; i < scStackPos; i++ )
+			//eintragen
+			insertSC( scStack[i], nea );
+	}
+
+	else
+		//es wurden keine SC angegeben, d.h. in alle inclusive SC eintragen
+		insertInclSC( nea );
+
+
+	//Aktion |, d.h. die auszuführende Aktion folgt später?
+	if( nea->action[0] == '|' )
+		//Ja, NEA auf Stack
+		insertNEAStack( nea );
+
+	else
+	{
+		//Aktion auch an andere NEAen weitergeben?
+		if( neaStackCnt )
+		{
+			//Ja, Aktion an alle NEAen weitergeben, die auf dem NEA-Stack sind
+			for( i = 0; i < neaStackCnt; i++ )
+			{
+				//den Speicher der alten Aktion freigeben
+				delete[] ( neaStack[i]->action );
+
+				//anhängen
+				neaStack[i]->action = nea->action;
+			}
+
+			//Stack löschen
+			neaStackCnt = 0;
+		}
+	}
+
+	//auf Stack
+	$$ = nea;
+\}
+					|	'EOF_OP'
+\{
+	//ist eine Regel, die am Ende der gesamten Eingabe ausgeführt wird
+	NEA_STR	*nea;
+	int		i;
+
+	//Regeln zählen
+	ruleCnt++;
+
+	//einen NEA erzeugen
+	nea = getNewNEA();
+
+	//ein EOF-NEA
+	nea->eof = true;
+
+	//die auszuführende Aktion holen
+	nea->action = s->getAction();
+
+	//den reg. Ausdruck als Text holen
+	nea->regText = s->getRegText( nea->line );
+
+
+	//Nun den NEA in die SC eintragen
+	if( scStackPos )
+	{
+		//alle SC auf dem Stack
+		for( i = 0; i < scStackPos; i++ )
+			//eintragen
+			insertSC( scStack[i], nea );
+	}
+
+	else
+		//es wurden keine SC angegeben, d.h. in alle inclusive SC eintragen
+		insertInclSC( nea );
+
+
+	//Aktion |, d.h. die auszuführende Aktion folgt später?
+	if( nea->action[0] == '|' )
+		//Ja, NEA auf Stack
+		insertNEAStack( nea );
+
+	else
+	{
+		//Aktion auch an andere NEAen weitergeben?
+		if( neaStackCnt )
+		{
+			//Ja, Aktion an alle NEAen weitergeben, die auf dem NEA-Stack sind
+			for( i = 0; i < neaStackCnt; i++ )
+			{
+				//den Speicher der alten Aktion freigeben
+				delete[] ( neaStack[i]->action );
+
+				//anhängen
+				neaStack[i]->action = nea->action;
+			}
+
+			//Stack löschen
+			neaStackCnt = 0;
+		}
+	}
+
+	//auf Stack
+	$$ = nea;
+\}
+					;
+
+scon_stk_ptr		:	'EPSILON'
+\{
+	//Position auf dem SC-Stack zurückgeben
+	$$ = scStackPos;
+\}
+					;
+
+//Form <SC1,SC2,SC3,...>
+scon				:	'SCOPEN' scon_stk_ptr namelist2 'SCCLOSE'
+\{
+	//Position auf dem SC-Stack zurückgeben
+	$$ = $2;
+\}
+
+//Form <*>
+					|	'SCOPEN' 'SCALL' 'SCCLOSE'
+\{
+	//regulären Ausdruck in alle SC eintragen
+	SC_STR	*sc;
+	int		i, j;
+
+	//Position merken
+	$$ = scStackPos;
+
+	//Ja, wurde sie schon auf dem Stack gepackt?
+	for( i = 0; i < scStrAnz; i++ )
+	{
+		//Zeiger
+		sc = &scStr[i];
+
+		//nur die eintragen, die nicht schon auf dem Stack sind
+		for( j = 0; j < scStackPos; j++ )
+		{
+			//gleich?
+			if( sc == scStack[j] )
+				//Ja
+				break;
+		}
+
+		//war die SC schon auf dem Stack?
+		if( j == scStackPos )
+			//Zeiger auf SC auf Stack
+			scStack[scStackPos++] = &scStr[i];
+	}
+\}
+
+//keine Start-Condition, regulärer Ausdruck gilt für alle inclusive-Start-Conditionen!
+					|	'EPSILON'
+\{
+	//Position auf dem SC-Stack zurückgeben
+	$$ = scStackPos;
+\}
+					;
+
+namelist2			:	namelist2 'KOMMA' sconname
+					|	sconname
+					;
+
+sconname			:	'NAME'
+\{
+	//den Namen einer SC auf den SC-Stack packen, zu der der folgende reg. Ausdruck gehören soll
+	int	scIndex, i;
+
+	//Wurde die SC überhaupt definiert?
+	if( ( scIndex = lookupSC( $1 ) ) >= 0 )
+	{
+		//Ja, wurde sie schon auf dem Stack gepackt?
+		for( i = 0; i < scStackPos; i++ )
+		{
+			//gleich?
+			if( !strcmp( scStack[i]->name, $1 ) )
+			{
+				//Ja, Meldung
+				cerr << "sslex: line " << line << ": Start condition " << $1 << " already on Stack!\n";
+
+				//raus hier
+				break;
+			}
+		}
+
+		//War sie schon auf dem Stack?
+		if( i == scStackPos )
+			//Nein
+			scStack[scStackPos++] = &scStr[scIndex];
+	}
+
+	else
+	{
+		//Nein, Fehler
+		cerr << "sslex: line " << line << ": Start condition " << $1 << " not definied!\n";
+
+		//Fehler
+		err++;
+	}
+
+	//Speicher freigeben
+	delete( $1 );
+\}
+					;
+
+//zwei regulärere Ausdrücke verknüpfen
+rule				:	re2 re
+\{
+	//Lookahead-NEA
+	NEA_STR	*nea;
+	ulong	index = $1->endState;
+
+	//Lookahead-Rule benutzt
+	laUsed = true;
+
+	//NEAen verlinken
+	nea = mkLink( $1, $2 );
+
+	//den vorherigen Finit-Zustand des NEA in einen Lookahead-Zustand ändern
+	setState( nea, index, MARK_AS_LA );
+
+	//ist ein Lookahead-NEA
+	nea->laState = true;
+
+	//NEAen auf Stack
+	$$ = nea;
+\}
+
+//zwei reg. Ausdrücke verknüpfen, dürfen aber nur am Ende einer Zeile stehen
+					|	re2 re 'ENDLINE'
+\{
+	/*
+		reg. Ausdruck nur am Zeilenende, aber zweimal trailing context
+	*/
+	NEA_STR	*nea;
+	ulong	index = $2->endState;
+	int		*cclStr;
+
+	//Lookahead-Rule benutzt
+	laUsed = true;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//newline
+	cclAdd( cclStr, '\n' );
+
+	//beide NEAen verlinken
+	nea = mkLink( $1, $2 );
+
+	//nun einen Zustandsübergang erzeugen
+	mkBranch( nea, cclStr, false );
+
+	//den vorherigen Finit-Zustand des NEA in einen Lookahead-Zustand ändern
+	setState( nea, index, MARK_AS_LA );
+
+	//ist ein Lookahead-NEA
+	nea->laState = true;
+
+	//NEAen auf Stack
+	$$ = nea;
+
+	//Fehler-Meldung ausgeben
+	cerr << "sslex: line " << line << ": Trailing context used twice!\n";
+
+	//Fehler
+	err++;
+\}
+
+//regulärer Ausdruck darf nur am Ende einer Zeile stehen
+					|	re 'ENDLINE'
+\{
+	//reg. Ausdruck nur am Zeilenende
+	ulong	index = $1->endState;
+	int		*cclStr;
+
+	//Lookahead-Rule benutzt
+	laUsed = true;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//newline
+	cclAdd( cclStr, '\n' );
+
+	//nun einen Zustandsübergang erzeugen
+	mkBranch( $1, cclStr, false );
+
+	//den vorherigen Finit-Zustand des NEA in einen Lookahead-Zustand ändern
+	setState( $1, index, MARK_AS_LA );
+
+	//ist ein Lookahead-NEA
+	$1->laState = true;
+
+	//NEAen auf Stack
+	$$ = $1;
+\}
+
+//regulärer Ausdruck
+					|	re
+\{
+	//NEAen auf Stack
+	$$ = $1;
+\}
+					;
+
+//zwei reguläre Ausdrücke "verodern"
+re					:	re 'OR' series
+\{
+	//NEAen verodern
+	$$ = mkor( $1, $3 );
+\}
+					|	series
+\{
+	//NEAen auf Stack
+	$$ = $1;
+\}
+					;
+
+//Lookahead-Symbol!
+re2					:	re 'LA'
+\{
+	//Lookahead-NEA
+
+	//ist ein Lookahead-NEA
+	$1->laState = true;
+
+	//NEA auf Stack
+	$$ = $1;
+\}
+					;
+
+series				:	series singleton
+\{
+	//NEAen auf Stack
+	$$ = mkLink( $1, $2 );
+\}
+					|	singleton
+\{
+	//NEA auf Stack
+	$$ = $1;
+\}
+					;
+
+//beliebig oft
+singleton			:	singleton 'MUL'
+\{
+	//NEA beliebig oft
+	$$ = mkClos( $1 );
+\}
+
+//mind. einmal
+					|	singleton 'PLUS'
+\{
+	//NEA höchstens einmal ausführen
+	$$ = mkPosClos( $1 );
+\}
+
+//höchstens einmal
+					|	singleton 'QUEST'
+\{
+	//NEA ist optional
+	$$ = mkOpt( $1 );
+\}
+
+//regulärer Ausdruck min. bis max. mal
+					|	singleton 'BOPEN' 'NUMBER' 'KOMMA' 'NUMBER' 'BCLOSE'
+\{
+	//NEA vervielfachen
+
+	//Wert OK?
+	if( ( $3 > $5 ) || ( $3 <= 0 ) )
+	{
+		//Fehler
+		cerr << "sslex: line " << line << ": Bad iteration values!\n";
+
+		//Fehler
+		err++;
+
+		//auf Stack
+		$$ = $1;
+	}
+
+	else
+	{
+		//optional?
+		if( $3 == 0 )
+		{
+			//negativ?
+			if( $5 <= 0 )
+			{
+				//Fehler
+				cerr << "sslex: line " << line << ": Bad iteration values!\n";
+
+				//Fehler
+				err++;
+
+				//auf Stack
+				$$ = $1;
+			}
+
+			else
+				//NEA vervielfachen
+				$$ = mkRepeat( $1, $3, $5 );
+		}
+
+		else
+			//NEA vervielfachen
+			$$ = mkRepeat( $1, $3, $5 );
+	}
+\}
+
+//reg. Ausdruck min. mal bis beliebig oft
+					|	singleton 'BOPEN' 'NUMBER' 'KOMMA' 'BCLOSE'
+\{
+	//NEA vervielfachen
+
+	//Wert OK?
+	if( $3 <= 0 )
+	{
+		//Fehler
+		cerr << "sslex: line " << line << ": Iteration value must be positive!\n";
+
+		//Fehler
+		err++;
+
+		//auf Stack
+		$$ = $1;
+	}
+
+	else
+		//NEA vervielfachen
+		$$ = mkRepeat( $1, $3, _INFINITY );
+\}
+
+//reg. Ausdruck genau ... mal
+					|	singleton 'BOPEN' 'NUMBER' 'BCLOSE'
+\{
+	//NEA vervielfachen
+
+	//Wert OK?
+	if( $3 <= 0 )
+	{
+		//Fehler
+		cerr << "sslex: line " << line << ": Iteration value must be positive!\n";
+
+		//Fehler
+		err++;
+
+		//auf Stack
+		$$ = $1;
+	}
+
+	else
+		//NEA vervielfachen
+		$$ = mkRepeat( $1, $3 );
+\}
+
+//irgendein Zeichen, ausser NEWLINE
+					|	'ANY'
+\{
+	NEA_STR		*nea;
+	int			*cclClass;
+
+	//einen NEA erzeugen
+	nea = getNewNEA();
+
+	//eine Zeichenklasse anlegen
+	cclClass = cclAny();
+
+	//Zustands-Übergang erzeugen
+	mkBranch( nea, cclClass, false );
+
+	//NEAen auf Stack
+	$$ = nea;
+\}
+
+//Zeichenklasse
+					|	fullccl
+\{
+	NEA_STR		*nea;
+
+	//einen NEA erzeugen
+	nea = getNewNEA();
+
+	//Zustands-Übergang erzeugen
+	mkBranch( nea, $1, false );
+
+	//NEAen auf Stack
+	$$ = nea;
+\}
+					|	'PREVCCL'
+
+//einen String
+					|	'SOPEN' string 'SOPEN'
+\{
+	//NEAen auf Stack
+	$$ = $2;
+\}
+
+//Priorität
+					|	'KLOPEN' re 'KLCLOSE'
+\{
+	//NEAen auf Stack
+	$$ = $2;
+\}
+
+//ein einzelnes Zeichen
+					|	'CHAR'
+\{
+	NEA_STR		*nea;
+	int			*cclClass;
+
+	//einen NEA erzeugen
+	nea = getNewNEA();
+
+	//eine Zeichenklasse anlegen
+	cclClass = cclInit();
+
+	//Zeichen hinzufügen
+	cclAdd( cclClass, $1 );
+
+	//Zustands-Übergang erzeugen
+	mkBranch( nea, cclClass, false );
+
+	//NEAen auf Stack
+	$$ = nea;
+\}
+					;
+
+//Form [...]
+fullccl				:	'COPEN' ccl 'CCLOSE'
+\{
+	//Zeichenklasse übernehmen
+	$$ = $2;
+\}
+
+//negierte Zeichenklasse [^...]
+					|	'COPEN' 'NEGATE' ccl 'CCLOSE'
+\{
+	//Zeichenklasse negieren
+	$$ = cclNegate( $3 );
+\}
+					;
+
+//Form [A-Z], [0-9]
+ccl					:	ccl 'CHAR' 'MINUS' 'CHAR'
+\{
+	char	upper, lower;
+
+	//Grenzen OK?
+	if( $2 > $4 )
+	{
+		//Fehler
+		cerr << "sslex: line " << line << ": Wrong limits in character class!\n";
+
+		//umdrehen
+		lower = $4;
+		upper = $2;
+
+		//Fehler
+		err++;
+	}
+
+	else
+	{
+		//Limits OK
+		upper = $4;
+		lower = $2;
+	}
+
+	//einen Zeichenbereich erzeugen
+	$$ = cclAddRange( $1, lower, upper );
+\}
+
+//ein einzelnes Zeichen
+					|	ccl 'CHAR'
+\{
+	//ein Zeichen zu einer Zeichenklasse hinzufügen
+	$$ = cclAdd( $1, $2 );
+\}
+
+//eine vordefinierte Zeichenklasse
+					|	ccl ccl_expr
+\{
+	//übernehmen
+	$$ = cclAdd( $1, $2 );
+
+	//zweite Zeichenklasse freigeben
+	delete[] ( $2 );
+\}
+
+//leer
+					|	'EPSILON'
+\{
+	//Zeichenklasse anfordern
+	$$ = cclInit();
+\}
+					;
+
+//Buchstabe oder Ziffer
+ccl_expr			:	'CCE_ALNUM'
+\{
+	int	*cclStr;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//isalnum
+	cclClass( cclStr, CCE_ALNUM );
+
+	//übergeben
+	$$ = cclStr;
+\}
+//Buchstabe
+					|	'CCE_ALPHA'
+\{
+	int	*cclStr;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//isalpha
+	cclClass( cclStr, CCE_ALPHA );
+
+	//übergeben
+	$$ = cclStr;
+\}
+
+//Space oder Tab
+					|	'CCE_BLANK'
+\{
+	int	*cclStr;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//isblank
+	cclClass( cclStr, CCE_BLANK );
+
+	//übergeben
+	$$ = cclStr;
+\}
+
+//nicht-druckbare Zeichen
+					|	'CCE_CNTRL'
+\{
+	int	*cclStr;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//iscntrl
+	cclClass( cclStr, CCE_CNTRL );
+
+	//übergeben
+	$$ = cclStr;
+\}
+
+//Ziffer
+					|	'CCE_DIGIT'
+\{
+	int	*cclStr;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//isdigit
+	cclClass( cclStr, CCE_DIGIT );
+
+	//übergeben
+	$$ = cclStr;
+\}
+
+//druckbare Zeichen, ohne Space
+					|	'CCE_GRAPH'
+\{
+	int	*cclStr;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//isgraph
+	cclClass( cclStr, CCE_GRAPH );
+
+	//übergeben
+	$$ = cclStr;
+\}
+
+//Kleinbuchstaben
+					|	'CCE_LOWER'
+\{
+	int	*cclStr;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//islower
+	cclClass( cclStr, CCE_LOWER );
+
+	//übergeben
+	$$ = cclStr;
+\}
+
+//druckbare Zeichen, mit Space
+					|	'CCE_PRINT'
+\{
+	int	*cclStr;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//isprint
+	cclClass( cclStr, CCE_PRINT );
+
+	//übergeben
+	$$ = cclStr;
+\}
+
+//Interpunktionszeichen
+					|	'CCE_PUNCT'
+\{
+	int	*cclStr;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//ispunct
+	cclClass( cclStr, CCE_PUNCT );
+
+	//übergeben
+	$$ = cclStr;
+\}
+
+//Space, \n, \r, \v, \f
+					|	'CCE_SPACE'
+\{
+	int	*cclStr;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//isspace
+	cclClass( cclStr, CCE_SPACE );
+
+	//übergeben
+	$$ = cclStr;
+\}
+
+//Großbuchstabe
+					|	'CCE_UPPER'
+\{
+	int	*cclStr;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//isupper
+	cclClass( cclStr, CCE_UPPER );
+
+	//übergeben
+	$$ = cclStr;
+\}
+
+//Hexadezimal
+					|	'CCE_XDIGIT'
+\{
+	int	*cclStr;
+
+	//eine Zeichenklasse erzeugen
+	cclStr = cclInit();
+
+	//isxdigit
+	cclClass( cclStr, CCE_XDIGIT );
+
+	//übergeben
+	$$ = cclStr;
+\}
+					;
+
+string				:	string 'CHAR'
+\{
+	//zwei NEAen verlinken
+	NEA_STR		*nea;
+	int			*cclClass;
+
+	//einen NEA erzeugen
+	nea = getNewNEA();
+
+	//eine Zeichenklasse anlegen
+	cclClass = cclInit();
+
+	//Zeichen hinzufügen
+	cclAdd( cclClass, $2 );
+
+	//Zustands-Übergang erzeugen
+	mkBranch( nea, cclClass, false );
+
+	//beide NEAen verknüpfen
+	$$ = mkLink( $1, nea );
+\}
+					|	'EPSILON'
+\{
+	//einen NEA erzeugen
+	$$ = getNewNEA();
+\}
+					;
+
+
+%extension
+\{
+
+NEA_STR *ssLexClass::getNewNEA( void )
+{
+	//einen neuen NEA anfordern
+	NEA_STR	*nea;
+	ulong	state;
+
+	//Speicher anfordern
+	nea = new( NEA_STR );
+
+	//initialisieren
+	nea->regText = 0L;
+	nea->action = 0L;
+	nea->laState = false;
+	nea->eof = false;
+	nea->begLine = false;
+	nea->line = 0;
+
+	//mit einen epsilon-Zustand initialisieren
+	state = getNewState();
+
+	//ist erster Zustand dieses NEA
+	nea->startState = state;
+	nea->endState = state;
+
+	//Zustand ist Finit-Zustand
+	setState( nea, state, MARK_AS_FINIT );
+
+	//zurückliefern
+	return( nea );
+}
+
+
+ulong ssLexClass::getNewState( void )
+{
+	//einen neuen Zustand anfordern
+	STATE_STR	**tmp, *s;
+	ulong		index;
+
+	//genug Speicher anfordern
+	tmp = new( STATE_STR *[stateStrCnt + 1] );
+
+	//kopieren
+	memcpy( tmp, stateStr, sizeof( STATE_STR * ) * stateStrCnt );
+
+	//alten Speicherbereich freigeben
+	if( stateStr )
+		delete[] ( stateStr );
+
+	//neue Adresse
+	stateStr = tmp;
+
+	//Speicher für die eigentliche STATE_STR anfordern
+	s = new( STATE_STR );
+
+	//Zeiger
+	stateStr[stateStrCnt] = s;
+
+	//Index merken
+	index = stateStrCnt++;
+
+	//Index merken
+	s->state = index;
+
+	//initialisieren
+	s->braStrCnt = 0;
+	s->braStr = 0L;
+	s->eps = false;
+	s->finit = false;
+	s->la = false;
+
+	//Index in stateStr zurückliefern
+	return( index );
+}
+
+
+int *ssLexClass::cclInit( void )
+{
+	//neue Zeichenklasse anfordern
+	int	*tmp;
+
+	//Speicher für Zeichenklasse
+	tmp = new( int[cclWidth] );
+
+	//initialisieren
+	memset( tmp, 0, sizeof( int ) * cclWidth );
+
+	//zurückliefern
+	return( tmp );
+}
+
+
+int *ssLexClass::cclAny( void )
+{
+	//eine Zeichenklasse gem. . (any-char) erzeugen
+	int		*tmp;
+
+	//Zeichenklasse initialisieren
+	tmp = cclInit();
+
+	//alle bis auf \n
+	cclAdd( tmp, '\n' );
+
+	//negieren
+	cclNegate( tmp );
+
+	//zurückliefern
+	return( tmp );
+}
+
+
+int *ssLexClass::cclAddRange( int *cclStr, char from, char to )
+{
+	//einen Bereich wie [a-z] eintragen
+	char	i;
+
+	//alle Zeichen eintragen
+	for( i = from; i < to; i++ )
+		//hinzufügen
+		cclAdd( cclStr, i );
+
+	//zurückliefern
+	return( cclStr );
+}
+
+
+int *ssLexClass::cclAdd( int *cclStr, char c )
+{
+	//ein Zeichen zu einer Zeichenklasse hinzufügen
+
+	//eintragen
+	cclStr[c] = 1;
+
+	//zurückliefern
+	return( cclStr );
+}
+
+
+int *ssLexClass::cclAdd( int *cclStr1, int *cclStr2 )
+{
+	//eine Zeichenklasse an eine andere anfügen
+	int	i;
+
+	//alle Zeichen eintragen
+	for( i = 0; i < cclWidth; i++ )
+	{
+		//Zeichen in zweiter Zeichenklasse gesetzt?
+		if( cclStr2[i] )
+			//ja, zur ersten hinzufügen
+			cclAdd( cclStr1, i );
+	}
+
+	//zurückliefern
+	return( cclStr1 );
+}
+
+
+int *ssLexClass::cclNegate( int *cclStr )
+{
+	//eine Zeichenklasse negieren
+	int	i;
+
+	//Alle Positionen
+	for( i = 0; i < cclWidth; i++ )
+		//gesetzt?
+		cclStr[i] = !cclStr[i];
+
+	//zurückliefern
+	return( cclStr );
+}
+
+
+int *ssLexClass::cclCopy( int *cclClass )
+{
+	//eine Zeichenklasse kopieren
+	int	*tmp;
+
+	//ist überhuapt etwas zu kopieren?
+	if( cclClass )
+	{
+		//Speicher für Zeichenklasse
+		tmp = new( int[cclWidth] );
+
+		//kopieren
+		memcpy( tmp, cclClass, sizeof( int ) * cclWidth );
+	}
+
+	else
+		//nein
+		tmp = 0L;
+
+	//zurückliefern
+	return( tmp );
+}
+
+
+int *ssLexClass::cclClass( int *cclStr, int type )
+{
+	//eine vordefinierte Zeichenklasse installieren
+	int ( *isArr[12] )( int ) = { isgraph, isupper, isxdigit, isdigit, isalpha, isalnum, ispunct, isprint, isspace, islower, isblank, iscntrl };
+	int	isIndex, i;
+
+	//Welche vordef. Zeichenklasse?
+	switch( type )
+	{
+		case CCE_GRAPH:
+		{
+			//isgrapgh
+			isIndex = 0;
+			break;
+		}
+
+		case CCE_UPPER:
+		{
+			//isupper
+			isIndex = 1;
+			break;
+		}
+
+		case CCE_XDIGIT:
+		{
+			//isxdigit
+			isIndex = 2;
+			break;
+		}
+
+		case CCE_DIGIT:
+		{
+			//isdigit
+			isIndex = 3;
+			break;
+		}
+
+		case CCE_ALPHA:
+		{
+			//isalpha
+			isIndex = 4;
+			break;
+		}
+
+		case CCE_ALNUM:
+		{
+			//isalnum
+			isIndex = 5;
+			break;
+		}
+
+		case CCE_PUNCT:
+		{
+			//ispunkt
+			isIndex = 6;
+			break;
+		}
+
+		case CCE_PRINT:
+		{
+			//isprint
+			isIndex = 7;
+			break;
+		}
+
+		case CCE_SPACE:
+		{
+			//isspace
+			isIndex = 8;
+			break;
+		}
+
+		case CCE_LOWER:
+		{
+			//islower
+			isIndex = 9;
+			break;
+		}
+
+		case CCE_BLANK:
+		{
+			//isblank
+			isIndex = 10;
+			break;
+		}
+
+		case CCE_CNTRL:
+		{
+			//iscntrl
+			isIndex = 11;
+			break;
+		}
+
+		default:
+		{
+			//unbekannte Zeichenklasse
+//			cerr << "sslex: line " << line << ": Illegal character class!\n";
+			cerr << "sslex: Illegal character!\n";
+
+			//Fehler
+//			err++;
+		}
+	}
+
+	//Zeichenklasse erzeugen
+	for( i = 0; i < cclWidth; i++ )
+	{
+		//Zeichen eintragen?
+		if( isascii( i ) && isArr[isIndex]( i ) )
+			//Ja
+			cclStr[i] = 1;
+	}
+
+	//zurückliefern
+	return( cclStr );
+}
+
+
+void ssLexClass::mkBranch( ulong from, ulong to, int *cclStr, bool eps )
+{
+	//einen Zustandsübergang mit cclStr erzeugen
+	BRA_STR		**braStr, *bra;
+	STATE_STR	*s1, *s2;
+
+	//Zeiger holen
+	s1 = stateStr[from];
+	s2 = stateStr[to];
+
+	//genug Speicher anfordern
+	braStr = new( BRA_STR *[s1->braStrCnt + 1] );
+
+	//kopieren
+	memcpy( braStr, s1->braStr, sizeof( BRA_STR * ) * s1->braStrCnt );
+
+	//alten Speicherbereich freigeben
+	if( s1->braStr )
+		delete[] ( s1->braStr );
+
+	//neue Adresse
+	s1->braStr = braStr;
+
+	//Speicher für die eigentliche BRA_STR anfordern
+	bra = new( BRA_STR );
+
+	//Zeiger
+	s1->braStr[s1->braStrCnt++] = bra;
+
+
+
+	//nun bra initialisieren
+	if( cclStr )
+		//Zeichenklasse eintragen
+		bra->cclClass = cclStr;
+
+	else
+		//keine Zeichen-Übergänge
+		bra->cclClass = 0L;
+
+	//epsilon-Übergang?
+	if( eps == true )
+		//Ja, ein epsilon-Übergang von from nach to
+		s1->eps = true;
+
+	//übertragen
+	bra->eps = eps;
+
+	//Ziel-Zustand eintragen
+	bra->bra = to;
+}
+
+
+void ssLexClass::mkBranch( NEA_STR *nea, int *cclStr, bool eps )
+{
+	//einen Zustand an einen NEA anhängen
+	STATE_STR	*s1, *s2;
+	ulong		index;
+
+	//Zustand erzeugen
+	index = getNewState();
+
+	//Zeiger holen
+	s1 = stateStr[nea->endState];
+	s2 = stateStr[index];
+
+	//Zustandsübergang erzeugen
+	mkBranch( nea->endState, index, cclStr, eps );
+
+	//ist kein Finit-Zustand mehr
+	setState( nea, nea->endState, MARK_AS_NORMAL );
+
+	//Zustand index ist neuer End-Zustand des NEA
+	nea->endState = index;
+
+	//ist ein Finit-Zustand
+	setState( nea, index, MARK_AS_FINIT );
+}
+
+
+NEA_STR *ssLexClass::mkor( NEA_STR *nea1, NEA_STR *nea2 )
+{
+	//zwei NEAen verodern
+	STATE_STR	*s1, *s2, *s3;
+	ulong		startIndex, endIndex;
+
+	//neuen Start-Zustand anfordern
+	startIndex = getNewState();
+
+	//neuen End-Zustand anfordern
+	endIndex = getNewState();
+
+	//eps-Übergang von startIndex zu den beiden Start-Zuständen des beiden NEAen
+	mkBranch( startIndex, nea1->startState, 0L, true );
+	mkBranch( startIndex, nea2->startState, 0L, true );
+
+	//eps-Übergang von den End-Zuständen beider NEAen zum neuen End-Zustand
+	mkBranch( nea1->endState, endIndex, 0L, true );
+	mkBranch( nea2->endState, endIndex, 0L, true );
+
+
+	//Zeiger holen
+	s1 = stateStr[nea1->endState];
+	s2 = stateStr[nea2->endState];
+	s3 = stateStr[endIndex];
+
+	//neuen Start-Zustand setzen
+	nea1->startState = startIndex;
+
+	//neuen End-Zustand setzen
+	nea1->endState = endIndex;
+
+	//startIndex ist neuer Start-Zustand des veroderten NEA
+	setState( nea1, endIndex, MARK_AS_FINIT );
+
+	//alte Finit-Zustände sind keine mehr
+	setState( nea1, nea1->endState, MARK_AS_NORMAL );
+	setState( nea2, nea1->endState, MARK_AS_NORMAL );
+
+	//ist der zweite NEA ein NEA mit Lookahead?
+	if( nea2->laState == true )
+		//Ja, so auch der neue
+		nea1->laState = true;
+
+	//zweite NEA-Struktur freigeben
+	delete( nea2 );
+
+	//veroderten NEA zurückliefern
+	return( nea1 );
+}
+
+
+NEA_STR *ssLexClass::mkLink( NEA_STR *nea1, NEA_STR *nea2 )
+{
+	//zwei NEAen verketten
+	STATE_STR	*s1;
+
+	//eps-Übergang von End-Zustand des ersten NEA zum Start-Zustand des zweiten
+	mkBranch( nea1->endState, nea2->startState, 0L, true );
+
+
+	//Zeiger holen
+	s1 = stateStr[nea1->endState];
+
+	//alter Finit-Zustand des ersten NEA ist keiner mehr
+	setState( nea1, nea1->endState, MARK_AS_NORMAL );
+
+	//neuen End-Zustand setzen
+	nea1->endState = nea2->endState;
+
+	//ist der zweite NEA ein NEA mit Lookahead?
+	if( nea2->laState == true )
+		//Ja, so auch der neue
+		nea1->laState = true;
+
+	//zweite NEA-Struktur freigeben
+	delete( nea2 );
+
+	//veroderten NEA zurückliefern
+	return( nea1 );
+}
+
+
+NEA_STR *ssLexClass::mkClos( NEA_STR *nea )
+{
+	//einen NEA beliebig oft ausführbar machen
+	STATE_STR	*s1, *s2;
+	ulong		startIndex, endIndex;
+
+	//neuen Start-Zustand anfordern
+	startIndex = getNewState();
+
+	//neuen End-Zustand anfordern
+	endIndex = getNewState();
+
+	//eps-Übergang von startIndex zum Start-Index des NEA
+	mkBranch( startIndex, nea->startState, 0L, true );
+
+	//eps-Übergang vom neuen Start-Zustand zum neuen End-Zustand
+	mkBranch( startIndex, endIndex, 0L, true );
+
+	//eps-Übergang vom alten End-Zustand zum neuen End-Zustand
+	mkBranch( nea->endState, endIndex, 0L, true );
+
+	//eps-Übergang vom alten End-Zustand zum alten Start-Zustand
+	mkBranch( nea->endState, nea->startState, 0L, true );
+
+
+	//Zeiger holen
+	s1 = stateStr[nea->endState];
+	s2 = stateStr[endIndex];
+
+	//neuen Start-Zustand setzen
+	nea->startState = startIndex;
+
+	//neuen End-Zustand setzen
+	nea->endState = endIndex;
+
+	//ist ein Finit-Zustand
+	setState( nea, endIndex, MARK_AS_FINIT );
+
+	//alter Finit-Zustand ist keiner mehr
+	setState( nea, nea->endState, MARK_AS_NORMAL );
+
+	//NEA zurückliefern
+	return( nea );
+}
+
+
+NEA_STR *ssLexClass::mkPosClos( NEA_STR *nea )
+{
+	//einen NEA mind. einmal ausführbar machen
+	STATE_STR	*s1, *s2;
+	ulong		startIndex, endIndex;
+
+	//neuen Start-Zustand anfordern
+	startIndex = getNewState();
+
+	//neuen End-Zustand anfordern
+	endIndex = getNewState();
+
+	//eps-Übergang von startIndex zum Start-Index des NEA
+	mkBranch( startIndex, nea->startState, 0L, true );
+
+	//eps-Übergang vom alten End-Zustand zum neuen End-Zustand
+	mkBranch( nea->endState, endIndex, 0L, true );
+
+	//eps-Übergang vom alten End-Zustand zum alten Start-Zustand
+	mkBranch( nea->endState, nea->startState, 0L, true );
+
+
+	//Zeiger holen
+	s1 = stateStr[nea->endState];
+	s2 = stateStr[endIndex];
+
+	//neuen Start-Zustand setzen
+	nea->startState = startIndex;
+
+	//neuen End-Zustand setzen
+	nea->endState = endIndex;
+
+	//ist ein Finit-Zustand
+	setState( nea, endIndex, MARK_AS_FINIT );
+
+	//alter Finit-Zustand ist keiner mehr
+	setState( nea, nea->endState, MARK_AS_NORMAL );
+
+	//NEA zurückliefern
+	return( nea );
+}
+
+
+NEA_STR *ssLexClass::mkOpt( NEA_STR *nea )
+{
+	//einen NEA optional machen
+	STATE_STR	*s1, *s2;
+	ulong		startIndex, endIndex;
+
+	//neuen Start-Zustand anfordern
+	startIndex = getNewState();
+
+	//neuen End-Zustand anfordern
+	endIndex = getNewState();
+
+	//eps-Übergang von startIndex zum Start-Index des NEA
+	mkBranch( startIndex, nea->startState, 0L, true );
+
+	//eps-Übergang vom neuen Start-Zustand zum neuen End-Zustand
+	mkBranch( startIndex, endIndex, 0L, true );
+
+	//eps-Übergang vom alten End-Zustand zum neuen End-Zustand
+	mkBranch( nea->endState, endIndex, 0L, true );
+
+
+	//Zeiger holen
+	s1 = stateStr[nea->endState];
+	s2 = stateStr[endIndex];
+
+	//neuen Start-Zustand setzen
+	nea->startState = startIndex;
+
+	//neuen End-Zustand setzen
+	nea->endState = endIndex;
+
+	//ist ein Finit-Zustand
+	setState( nea, endIndex, MARK_AS_FINIT );
+
+	//alter Finit-Zustand ist keiner mehr
+	setState( nea, nea->endState, MARK_AS_NORMAL );
+
+	//NEA zurückliefern
+	return( nea );
+}
+
+
+NEA_STR *ssLexClass::mkRepeat( NEA_STR *nea, int value )
+{
+	//einen NEA genau value Mal ausführen
+	NEA_STR		*cpyNEA, *base = mkCopy( nea );
+	int			i;
+
+	//mind. einmal?
+	if( value > 1 )
+	{
+		//value mal
+		for( i = 0; i < value - 1; i++ )
+		{
+			//NEA kopieren
+			cpyNEA = mkCopy( base );
+
+			//NEAen verbinden
+			nea = mkLink( nea, cpyNEA );
+		}
+	}
+
+	//NEA zurückliefern
+	return( nea );
+}
+
+
+NEA_STR *ssLexClass::mkRepeat( NEA_STR *nea, int min, int max )
+{
+	//einen NEA mindestens min-mal ausführen, maximal max-mal
+	NEA_STR		*cpyNEA, *base = mkCopy( nea );
+	ulong		endIndex, index;
+	int			i;
+
+	//neuen End-Zustand anfordern
+	endIndex = getNewState();
+
+	//mind. einmal?
+	if( max > min )
+	{
+		//min mal
+		for( i = 1; i < max; i++ )
+		{
+			//NEA kopieren
+			cpyNEA = mkCopy( base );
+
+			//den End-Zustand merken
+			index = nea->endState;
+
+			//NEAen verbinden
+			nea = mkLink( nea, cpyNEA );
+
+			//i > min, d.h. optional?
+			if( i >= min )
+				//Ja
+				mkBranch( index, endIndex, 0L, true );
+		}
+
+		//min=0, d.h. auch kein mal erlaubt?
+		if( !min )
+			//Ja, eps-Übergang vom Start-Zustand zum End-Zustand
+			mkBranch( nea->startState, endIndex, 0L, true );
+
+		//neuen End-Zustand
+		mkBranch( nea->endState, endIndex, 0L, true );
+
+		//alter Finit-Zustand ist keiner mehr
+		setState( nea, nea->endState, MARK_AS_NORMAL );
+
+		//neuen Finit-Zustand setzen
+		setState( nea, endIndex, MARK_AS_FINIT );
+
+		//neuen Finit-Zustand eintragen
+		nea->endState = endIndex;
+	}
+
+	else if( max == _INFINITY )
+	{
+		//NEA min. min-mal, dann beliebig oft
+		for( i = 1; i < min; i++ )
+		{
+			//NEA kopieren
+			cpyNEA = mkCopy( base );
+
+			//NEAen verbinden
+			nea = mkLink( nea, cpyNEA );
+		}
+
+		//nun noch einen anfügen, diesen aber beliebig oft ausführbar machen
+		cpyNEA = mkCopy( base );
+
+		//beliebig oft ausführbar machen
+		cpyNEA = mkClos( base );
+
+		//beide verbinden
+		nea = mkLink( nea, cpyNEA );
+	}
+
+	//NEA zurückliefern
+	return( nea );
+}
+
+
+NEA_STR *ssLexClass::mkCopy( NEA_STR *nea )
+{
+	//eine Kopie eines NEA erzeugen
+	STATE_STR	*indexStr, *toCopyStr;
+	NEA_STR		*cpyNEA;
+	BRA_STR		*bra;
+	long		*stack, stackPos = 0;
+	long		*transStates, index, toCopy, neaDest, dest;
+	int			*cclClass, i;
+
+	//neuen NEA anfordern
+	cpyNEA = getNewNEA();
+
+	//Speicher für den Zustands-Stack holen
+	stack = new( long[stateStrCnt] );
+
+	//in diesem Array steht die Nummer des Zustandes, den ein Zustand in nea hat, in cpyNEA
+	transStates = new( long[stateStrCnt] );
+
+	//initialisieren
+	memset( transStates, -1, sizeof( long ) * stateStrCnt );
+
+	//den Startzustand eintragen
+	transStates[nea->startState] = cpyNEA->startState;
+
+	//diesen Zustand auf den Stack schieben
+	stack[stackPos++] = nea->startState;
+
+	while( stackPos )
+	{
+		//Zustand vom Stack holen
+		index = stack[--stackPos];
+
+		//Gibt es diesen Zustand in cpyNEA schon?
+		if( transStates[index] >= 0 )
+			//Ja, holen
+			toCopy = transStates[index];
+
+		else
+		{
+			//Nein, erzeugen
+			toCopy = getNewState();
+
+			//eintragen
+			transStates[index] = toCopy;
+		}
+
+		//Zeiger auf STATE_STR
+		indexStr = stateStr[index];
+		toCopyStr = stateStr[toCopy];
+
+		//nun alle Zustandsübergänge des Zustands index in cpyNEA erzeugen
+		for( i = 0; i < indexStr->braStrCnt; i++ )
+		{
+			//Zeiger auf BRA_STR
+			bra = indexStr->braStr[i];
+
+			//Ziel-Zustand
+			neaDest = bra->bra;
+
+			//Ziel-Zustand erzeugen?
+			if( transStates[neaDest] < 0 )
+			{
+				//Ja, erzeugen
+				dest = getNewState();
+
+				//eintragen
+				transStates[neaDest] = dest;
+
+				//Zeichenklasse kopieren
+				cclClass = cclCopy( bra->cclClass );
+
+				//Zustandsübergang erzeugen
+				mkBranch( toCopy, dest, cclClass, bra->eps );
+
+				//Zustand auf dem Stack schieben
+				stack[stackPos++] = neaDest;
+			}
+		}
+
+		//alle anderen Dinge kopieren
+		toCopyStr->eps = indexStr->eps;
+		toCopyStr->finit = indexStr->finit;
+		toCopyStr->la = indexStr->la;
+	}
+
+	//NEA-Infos kopieren
+	cpyNEA->action = nea->action;
+	cpyNEA->endState = transStates[nea->endState];
+	cpyNEA->laState = nea->laState;
+	cpyNEA->regText = nea->regText;
+	cpyNEA->startState = transStates[nea->startState];
+
+	//Speicher wieder freigeben
+	delete[] ( stack );
+	delete[] ( transStates );
+
+	//NEA zurückliefern
+	return( cpyNEA );
+}
+
+
+void ssLexClass::setState( NEA_STR *nea, ulong state, int type )
+{
+	//einen Zustand setzen
+	//MARK_AS_NORMAL: normaler Zustand
+	//MARK_AS_FINIT: End-Zustand
+	//MARK_AS_LA: Lookahead-Zustand
+	STATE_STR	*s1;
+
+	//Teuger
+	s1 = stateStr[state];
+
+	//Welcher ist es denn?
+	switch( type )
+	{
+		case MARK_AS_NORMAL:
+		{
+			//normaler Zustand
+			s1->finit = false;
+			s1->la = false;
+			s1->nea = nea;
+			break;
+		}
+
+		case MARK_AS_FINIT:
+		{
+			//End-Zustand
+			s1->finit = true;
+			s1->la = false;
+			s1->nea = nea;
+			break;
+		}
+
+		case MARK_AS_LA:
+		{
+			//Lookahead-Zustand
+			s1->finit = false;
+			s1->la = true;
+			s1->nea = nea;
+			break;
+		}
+
+		default:
+		{
+			//Fehler
+			cerr << "sslex: Illegal state in setState!\n";
+
+			//Fehler
+//			err++;
+		}
+	}
+}
+
+
+
+void ssLexClass::outputNEA( NEA_STR *nea )
+{
+	//einen NEA ausgeben
+	STATE_STR	*indexStr;
+	BRA_STR		*bra;
+	long		*stack, stackPos = 0;
+	long		*doub, index;
+	int			i, j;
+
+	//Speicher für den Zustands-Stack holen
+	stack = new( long[stateStrCnt] );
+
+	//Zustände nicht doppelt ausgeben
+	doub = new( long[stateStrCnt] );
+
+	//initialisieren
+	memset( doub, 0, sizeof( long ) * stateStrCnt );
+
+	//den Startzustand eintragen
+//	doub[nea->startState] = 1;
+
+	//Start-Zustand auf den Stack
+	stack[stackPos++] = nea->startState;
+
+	//Ist es ein Lookahead-NEA?
+	if( nea->laState == true )
+		//Ja
+		cout << "Lookahead-NEA\n";
+
+	while( stackPos )
+	{
+		//Zustand holen
+		index = stack[--stackPos];
+
+		//Zeiger auf STATE_STR
+		indexStr = stateStr[index];
+
+		//ausgeben?
+		if( !doub[index] )
+		{
+			//Ja, Zustandsnummer ausgeben
+			cout << "\n\nZustand: " << index;
+
+			//Start-Zustand?
+			if( index == nea->startState )
+				//Ja
+				cout << "\tStartzustand\n";
+
+			else if( indexStr->la == true )
+				//ist ein Lookahead-Zustand
+				cout << "\tLookahead-Zustand\n";
+
+			else if( index == nea->endState )
+				//Ja
+				cout << "\tEnd-Zustand\n";
+
+			else
+				//normaler Zustand
+				cout << "\n";
+
+			//Zuständsübergänge ausgeben
+			for( i = 0; i < indexStr->braStrCnt; i++ )
+			{
+				//Zeiger auf BRA_STR
+				bra = indexStr->braStr[i];
+
+				//ausgeben
+				cout << "Übergang zu " << bra->bra << "\n";
+
+				//gibt es eine?
+				if( bra->cclClass )
+				{
+					//Zeichenklasse ausgeben
+					cout << "Zeichenklasse\n";
+
+					//Zeichen ausgeben
+					for( j = 0; j < cclWidth; j++ )
+					{
+						//Zeichen gesetzt?
+						if( bra->cclClass[j] )
+							fprintf( stdout, "%c", j );
+					}
+
+					//nächste Zeile
+					cout << "\n";
+				}
+
+				//Epsilon?
+				if( bra->eps )
+					//Ja
+					cout << "Epsilon\n";
+
+				//aus Stack schieben
+				stack[stackPos++] = bra->bra;
+			}
+
+			//markieren
+			doub[index] = 1;
+		}
+	}
+
+	//Speicher wieder freigeben
+	delete( stack );
+	delete( doub );
+}
+
+
+
+void ssLexClass::insertSC( char *name, bool type )
+{
+	//eine in %definition definierte SC eintragen
+	SC_STR	*tmp, *sc;
+
+	//schon definiert?
+	if( lookupSC( name ) < 0 )
+	{
+		//Speicher anfordern
+		tmp = new( SC_STR[scStrAnz + 1] );
+
+		//alte Daten kopieren
+		memcpy( tmp, scStr, sizeof( SC_STR ) * scStrAnz );
+
+		//alten Speicherbereich freigeben
+		if( scStr )
+			delete( scStr );
+
+		//neue Adresse
+		scStr = tmp;
+
+		//Zeiger auf Struktur holen
+		sc = &scStr[scStrAnz++];
+
+		//eintragen
+		sc->name = name;
+
+		//Typ eintragen
+		sc->type = type;
+
+		//initialisieren
+		sc->neaArr = 0L;
+		sc->neaArrCnt = 0;
+	}
+
+	else
+	{
+		//Fehler
+		cerr << "sslex: line " << line << ": SC " << name << " already definied!\n";
+
+		//Fehler
+		err++;
+	}
+}
+
+
+int ssLexClass::lookupSC( char *name )
+{
+	//eine in %definition definierte SC suchen
+	int	i;
+
+	//Alle Einträge
+	for( i = 0; i < scStrAnz; i++ )
+	{
+		//Namen gleich
+		if( !strcmp( scStr[i].name, name ) )
+			//Ja
+			return( i );
+	}
+
+	//war nicht dabei
+	return( -1 );
+}
+
+
+void ssLexClass::insertSC( SC_STR *scStr, NEA_STR *nea )
+{
+	//einen NEA an eine SC einfügen
+	NEA_STR	**tmp;
+	bool	eof = nea->eof;
+
+	//eof-NEA?
+	if( ( eof == false ) || ( ( eof == true ) && ( ( insertEOFSC( scStr ) ) == false ) ) )
+	{
+		//genug Speicher anfordern
+		tmp = new( NEA_STR *[scStr->neaArrCnt + 1] );
+
+		//kopieren
+		memcpy( tmp, scStr->neaArr, sizeof( NEA_STR * ) * scStr->neaArrCnt );
+
+		//alten Speicher freigeben
+		if( scStr->neaArr )
+			delete( scStr->neaArr );
+
+		//Adressen
+		scStr->neaArr = tmp;
+
+		//NEA_STR eintragen
+		scStr->neaArr[scStr->neaArrCnt++] = nea;
+	}
+}
+
+
+void ssLexClass::insertAllSC( NEA_STR *nea )
+{
+	//einen NEA an alle SC einfügen
+	NEA_STR	**tmp;
+	SC_STR	*sc;
+	long	i;
+	bool	eof = nea->eof;
+
+	//Alle SC
+	for( i = 0; i < scStrAnz; i++ )
+	{
+		//Zeiger
+		sc = &scStr[i];
+	
+		//eof-NEA?
+		if( ( eof == false ) || ( ( eof == true ) && ( ( insertEOFSC( sc ) ) == false ) ) )
+		{
+			//genug Speicher anfordern
+			tmp = new( NEA_STR *[sc->neaArrCnt + 1] );
+
+			//kopieren
+			memcpy( tmp, sc->neaArr, sizeof( NEA_STR * ) * sc->neaArrCnt );
+
+			//alten Speicher freigeben
+			if( sc->neaArr )
+				delete( sc->neaArr );
+
+			//Adressen
+			sc->neaArr = tmp;
+
+			//NEA_STR eintragen
+			sc->neaArr[sc->neaArrCnt++] = nea;
+		}
+	}
+}
+
+
+void ssLexClass::insertInclSC( NEA_STR *nea )
+{
+	//einen NEA an alle inclusive SC einfügen
+	NEA_STR	**tmp;
+	SC_STR	*sc;
+	long	i;
+	bool	eof = nea->eof;
+
+	//Alle SC
+	for( i = 0; i < scStrAnz; i++ )
+	{
+		//Zeiger
+		sc = &scStr[i];
+
+		//inclusive?
+		if( sc->type == false )
+		{
+			//eof-NEA?
+			if( ( eof == false ) || ( ( eof == true ) && ( ( insertEOFSC( sc ) ) == false ) ) )
+			{
+				//genug Speicher anfordern
+				tmp = new( NEA_STR *[sc->neaArrCnt + 1] );
+
+				//kopieren
+				memcpy( tmp, sc->neaArr, sizeof( NEA_STR * ) * sc->neaArrCnt );
+
+				//alten Speicher freigeben
+				if( sc->neaArr )
+					delete( sc->neaArr );
+
+				//Adressen
+				sc->neaArr = tmp;
+
+				//NEA_STR eintragen
+				sc->neaArr[sc->neaArrCnt++] = nea;
+			}
+		}
+	}
+}
+
+
+bool ssLexClass::insertEOFSC( SC_STR *scStr )
+{
+	//prüfen, ob mit der SC bereits ein EOF-NEA verbunden ist
+	bool	ex = false;
+	int		j;
+
+	//alle NEAen dieser SC
+	for( j = 0; j < scStr->neaArrCnt; j++ )
+	{
+		//Hat diese SC schon einen NEA mit <<EOF>>-Regel?
+		if( scStr->neaArr[j]->eof == true )
+			//Ja
+			ex = true;
+	}
+
+	//gab es bereits einen NEA mit <<EOF>>?
+	if( ex == true )
+	{
+		//Fehler
+		cerr << "sslex: line " << line << ": SC " << scStr->name << " already has an <<EOF>>-Rule!\n";
+
+		//Fehler
+		err++;
+	}
+
+	//Alles OK
+	return( ex );
+}
+
+
+void ssLexClass::extendNEAStack( void )
+{
+	/*
+		den NEA-Stack vergrößern, wird benötig, falls mehrere NEAen diegleiche
+		Aktion ausführen sollen (erstes Zeichen |).
+	*/
+	NEA_STR	**tmp;
+
+	//Speicher anfordern
+	tmp = new( NEA_STR *[neaStackCnt + 100] );
+
+	//kopieren
+	memcpy( tmp, neaStack, sizeof( NEA_STR * ) * neaStackCnt );
+
+	//Speicher freigeben
+	if( neaStack )
+		delete( neaStack );
+
+	//Adresse
+	neaStack = tmp;
+
+	//neue Größe
+	neaStackMax += 100;
+}
+
+
+void ssLexClass::insertNEAStack( NEA_STR *nea )
+{
+	//einen NEA auf den NEA-Stack packen
+	if( neaStackCnt >= neaStackMax )
+		//vergrößern
+		extendNEAStack();
+
+	//nun auf dem Stack packen
+	neaStack[neaStackCnt++] = nea;
+}
+
+
+ECLOS_STR *ssLexClass::createEClos( void )
+{
+	//eine ECLOS_STR-Struktur vorbereiten
+	ECLOS_STR	*tmp;
+
+	//Speicher anfordern
+	tmp = new( ECLOS_STR );
+
+	//initialisieren
+	memset( tmp, 0, sizeof( ECLOS_STR ) );
+
+	//zurückliefern
+	return( tmp );
+}
+
+
+void ssLexClass::insertFromEClos( ECLOS_STR *eclosStr, ulong index )
+{
+	/*
+		einen Zustand in eine ECLOS_STR-Struktur eintragen, von dem aus die Epsilon-Übergänge berechnet
+		werden sollen.
+	*/
+	ulong	*tmp, i;
+
+	//genügend Speicher anfordern
+	tmp = new( ulong[eclosStr->fromCnt + 1] );
+
+	//kopieren
+	memcpy( tmp, eclosStr->from, sizeof( ulong ) * eclosStr->fromCnt );
+
+	//alten Speicher löschen
+	if( eclosStr->from )
+		delete( eclosStr->from );
+
+	//Zeiger
+	eclosStr->from = tmp;
+
+
+	//sortiert eintragen
+	for( i = 0; i < eclosStr->fromCnt; i++ )
+	{
+		//vergleichen
+		if( eclosStr->from[i] > index )
+		{
+			//an dieser Stelle eintragen
+			memmove( &eclosStr->from[i + 1], &eclosStr->from[i], sizeof( ulong ) * ( eclosStr->fromCnt - i ) );
+
+			//eintragen
+			eclosStr->from[i] = index;
+
+			//Ende
+			break;
+		}
+	}
+
+	//an letzter Stelle eintragen?
+	if( i == eclosStr->fromCnt )
+		//Ja
+		eclosStr->from[i] = index;
+
+	//ein Zustand weiter
+	eclosStr->fromCnt++;
+}
+
+
+void ssLexClass::insertFromEClos( ECLOS_STR *eclosStr, ulong *index, ulong anz )
+{
+	/*
+		mehrere Zustände in eine ECLOS_STR-Struktur eintragen, von denen aus die Epsilon-Übergänge
+		berechnet werden sollen.
+	*/
+	ulong	i;
+
+	//Alle Zustände eintragen
+	for( i = 0; i < anz; i++ )
+		//eintragen
+		insertFromEClos( eclosStr, index[i] );
+}
+
+
+void ssLexClass::insertToEClos( ECLOS_STR *eclosStr, ulong index )
+{
+	/*
+		einen Zustand in eine ECLOS_STR-Struktur eintragen, der von from aus über einen Epsilon-Übergänge
+		erreicht wird.
+	*/
+	ulong	*tmp, i;
+
+	//genügend Speicher anfordern
+	tmp = new( ulong[eclosStr->toCnt + 1] );
+
+	//kopieren
+	memcpy( tmp, eclosStr->to, sizeof( ulong ) * eclosStr->toCnt );
+
+	//alten Speicher löschen
+	if( eclosStr->to )
+		delete( eclosStr->to );
+
+	//Zeiger
+	eclosStr->to = tmp;
+
+
+	//sortiert eintragen
+	for( i = 0; i < eclosStr->toCnt; i++ )
+	{
+		//vergleichen
+		if( eclosStr->to[i] > index )
+		{
+			//an dieser Stelle eintragen
+			memmove( &eclosStr->to[i + 1], &eclosStr->to[i], sizeof( ulong ) * ( eclosStr->toCnt - i ) );
+
+			//eintragen
+			eclosStr->to[i] = index;
+
+			//Ende
+			break;
+		}
+	}
+
+	//an letzter Stelle eintragen?
+	if( i == eclosStr->toCnt )
+		//Ja
+		eclosStr->to[i] = index;
+
+	//ein Zustand weiter
+	eclosStr->toCnt++;
+}
+
+
+bool ssLexClass::findToEClos( ECLOS_STR *eclosStr, ulong index )
+{
+	//sucht einen Index in to
+	ulong	i;
+	bool	er = false;
+
+	//Alle Zustände in to
+	for( i = 0; i < eclosStr->toCnt; i++ )
+	{
+		//Zustände gleich?
+		if( eclosStr->to[i] == index )
+		{
+			//Ja
+			er = true;
+			break;
+		}
+	}
+
+	//zurückliefern
+	return( er );
+}
+
+
+void ssLexClass::generateEClos( ECLOS_STR *eclosStr )
+{
+	/*
+		Nun die Zustände bestimmen, die über Epsilon-Übergänge von from aus erreichbar sind und
+		in to eintragen.
+	*/
+	STATE_STR	*sc;
+	BRA_STR		*braStr;
+	ulong		*stack, stackPos = 0, i, index;
+
+	//Speicher für den Stack anfordern
+	stack = new( ulong[stateStrCnt] );
+
+	//zuerst alle Zustände from selbst auf den Stack legen
+	for( i = 0; i < eclosStr->fromCnt; i++ )
+	{
+		//auf Stack
+		stack[stackPos++] = eclosStr->from[i];
+
+		//initialisieren
+		insertToEClos( eclosStr, eclosStr->from[i] );
+	}
+
+	//solange Zustände auf dem Stack sind
+	while( stackPos )
+	{
+		//einen Index vom Stack holen
+		index = stack[--stackPos];
+
+		//Zeiger auf STATE_STR
+		sc = stateStr[index];
+
+		//Alle Zustandsübergänge von index
+		for( i = 0; i < sc->braStrCnt; i++ )
+		{
+			//Zeiger auf BRA_STR
+			braStr = sc->braStr[i];
+
+			//Ist es ein epsilon-Übergang?
+			if( braStr->eps == true )
+			{
+				//Ja, schon enthalten?
+				if( findToEClos( eclosStr, braStr->bra ) == false )
+				{
+					//Nein, eintragen
+					insertToEClos( eclosStr, braStr->bra );
+
+					//auf den Stack legen
+					stack[stackPos++] = braStr->bra;
+				}
+			}
+		}
+	}
+}
+
+
+MOVE_STR *ssLexClass::createMove( char c )
+{
+	//eine MOVE_STR-Struktur vorbereiten
+	MOVE_STR	*tmp;
+
+	//Speicher anfordern
+	tmp = new( MOVE_STR );
+
+	//initialisieren
+	memset( tmp, 0, sizeof( MOVE_STR ) );
+
+	//Zeichen eintragen
+	tmp->jump = c;
+
+	//zurückliefern
+	return( tmp );
+}
+
+
+void ssLexClass::insertFromMove( MOVE_STR *moveStr, ulong index )
+{
+	/*
+		einen Zustand in eine MOVE_STR-Struktur eintragen, von dem aus die Übergänge berechnet
+		werden sollen.
+	*/
+	ulong	*tmp, i;
+
+	//genügend Speicher anfordern
+	tmp = new( ulong[moveStr->fromCnt + 1] );
+
+	//kopieren
+	memcpy( tmp, moveStr->from, sizeof( ulong ) * moveStr->fromCnt );
+
+	//alten Speicher löschen
+	if( moveStr->from )
+		delete( moveStr->from );
+
+	//Zeiger
+	moveStr->from = tmp;
+
+
+	//sortiert eintragen
+	for( i = 0; i < moveStr->fromCnt; i++ )
+	{
+		//vergleichen
+		if( moveStr->from[i] > index )
+		{
+			//an dieser Stelle eintragen
+			memmove( &moveStr->from[i + 1], &moveStr->from[i], sizeof( ulong ) * ( moveStr->fromCnt - i ) );
+
+			//eintragen
+			moveStr->from[i] = index;
+
+			//Ende
+			break;
+		}
+	}
+
+	//an letzter Stelle eintragen?
+	if( i == moveStr->fromCnt )
+		//Ja
+		moveStr->from[i] = index;
+
+	//ein Zustand weiter
+	moveStr->fromCnt++;
+}
+
+
+void ssLexClass::insertFromMove( MOVE_STR *moveStr, ulong *index, ulong anz )
+{
+	/*
+		mehrere Zustände in eine MOVE_STR-Struktur eintragen, von denen aus die Übergänge
+		berechnet werden sollen.
+	*/
+	ulong	i;
+
+	//Alle Zustände eintragen
+	for( i = 0; i < anz; i++ )
+		//eintragen
+		insertFromMove( moveStr, index[i] );
+}
+
+
+void ssLexClass::insertToMove( MOVE_STR *moveStr, ulong index )
+{
+	/*
+		einen Zustand in eine MOVE_STR-Struktur eintragen, der von from aus über einen Übergänge
+		erreicht wird.
+	*/
+	ulong	*tmp, i;
+
+	//genügend Speicher anfordern
+	tmp = new( ulong[moveStr->toCnt + 1] );
+
+	//kopieren
+	memcpy( tmp, moveStr->to, sizeof( ulong ) * moveStr->toCnt );
+
+	//alten Speicher löschen
+	if( moveStr->to )
+		delete( moveStr->to );
+
+	//Zeiger
+	moveStr->to = tmp;
+
+
+	//sortiert eintragen
+	for( i = 0; i < moveStr->toCnt; i++ )
+	{
+		//vergleichen
+		if( moveStr->to[i] > index )
+		{
+			//an dieser Stelle eintragen
+			memmove( &moveStr->to[i + 1], &moveStr->to[i], sizeof( ulong ) * ( moveStr->toCnt - i ) );
+
+			//eintragen
+			moveStr->to[i] = index;
+
+			//Ende
+			break;
+		}
+	}
+
+	//an letzter Stelle eintragen?
+	if( i == moveStr->toCnt )
+		//Ja
+		moveStr->to[i] = index;
+
+	//ein Zustand weiter
+	moveStr->toCnt++;
+}
+
+
+bool ssLexClass::findToMove( MOVE_STR *moveStr, ulong index )
+{
+	//sucht einen Index in to
+	ulong	i;
+	bool	er = false;
+
+	//Alle Zustände in to
+	for( i = 0; i < moveStr->toCnt; i++ )
+	{
+		//Zustände gleich?
+		if( moveStr->to[i] == index )
+		{
+			//Ja
+			er = true;
+			break;
+		}
+	}
+
+	//zurückliefern
+	return( er );
+}
+
+
+void ssLexClass::generateMove( MOVE_STR *moveStr )
+{
+	/*
+		Nun die Zustände bestimmen, die über moveStr->jump-Übergänge von from aus erreichbar sind und
+		in to eintragen.
+	*/
+	STATE_STR	*sc;
+	BRA_STR		*braStr;
+	ulong		i, j, index;
+	char		c = moveStr->jump;
+
+	//solange Zustände auf dem Stack sind
+	for( j = 0; j < moveStr->fromCnt; j++ )
+	{
+		//einen Index vom Stack holen
+		index = moveStr->from[j];
+
+		//Zeiger auf STATE_STR
+		sc = stateStr[index];
+
+		//Alle Zustandsübergänge von index
+		for( i = 0; i < sc->braStrCnt; i++ )
+		{
+			//Zeiger auf BRA_STR
+			braStr = sc->braStr[i];
+
+			//Ist es ein epsilon-Übergang?
+			if( braStr->cclClass && braStr->cclClass[c] )
+			{
+				//Ja, schon enthalten?
+				if( findToMove( moveStr, braStr->bra ) == false )
+					//Nein, eintragen
+					insertToMove( moveStr, braStr->bra );
+			}
+		}
+	}
+}
+
+
+void ssLexClass::initDStatesStack( void )
+{
+	//DSTATES wird als Stack implementiert.
+
+	//initalisieren
+	dstatesStack = 0L;
+	dstatesStackPos = 0;
+}
+
+
+void ssLexClass::removeDStatesStack( void )
+{
+	//DSTATES deinitialisieren
+	if( dstatesStack )
+		delete( dstatesStack );
+
+	//keine Elemente auf dem Stack
+	dstatesStackPos = 0;
+}
+
+
+long ssLexClass::insertDStates( ulong *index, ulong anz )
+{
+	//eine neue NEA-Zustandsmenge in DSTATES eintragen, d.h. einen neuen DEA-Zustand erzeugen
+	DSTATES		*tmp, **tmp2;
+	long		deaIndex;
+
+	//gibt es den DEA-Zustand schon?
+	if( ( deaIndex = lookupDStates( index, anz ) ) < 0 )
+	{
+		//ist noch nicht enthalten
+		tmp2 = new( DSTATES *[dstatesStackPos + 1] );
+
+		//schon auf dem Stack enthaltende Zeiger kopieren
+		memcpy( tmp2, dstatesStack, sizeof( DSTATES * ) * dstatesStackPos );
+
+		//alten Speicher freigeben
+		if( dstatesStack )
+			delete( dstatesStack );
+
+		//Zeiger
+		dstatesStack = tmp2;
+
+		//neue DSTATES-Struktur anlegen
+		tmp = new( DSTATES );
+
+		//die NEA-Zustände eintragen
+		tmp->neaIndex = index;
+		tmp->neaIndexCnt = anz;
+
+		//unmarkiert
+		tmp->marked = false;
+
+		//Index des DEA-Zustandes
+		deaIndex = tmp->deaIndex = deaIndexCnt++;
+
+		//auf dem Stack
+		dstatesStack[dstatesStackPos++] = tmp;
+	}
+
+	//DEA-Zustands-Index zurückliefern
+	return( deaIndex );
+}
+
+
+long ssLexClass::lookupDStates( ulong *index, ulong anz )
+{
+	//eine Menge von NEA-Zuständen, d.h. einen DEA-Zustand suchen
+	DSTATES		*d;
+	ulong		i;
+
+	//Alle bisherigen DEA-Zustände
+	for( i = 0; i < dstatesStackPos; i++)
+	{
+		//Zeiger
+		d = dstatesStack[i];
+
+		//Anzahl der Einträge gleich?
+		if( anz == d->neaIndexCnt )
+		{
+			//Ja, vergleichen
+			if( !memcmp( index, d->neaIndex, sizeof( ulong ) * anz ) )
+				//Ja, den DEA-Zustand gibt es bereits
+				return( d->deaIndex );
+		}
+	}
+
+	//den DEA-Zustand gibt es noch nicht
+	return( -1 );
+}
+
+
+long ssLexClass::getUnmarkedDStates( void )
+{
+	//einen unmarkierten DEA-Zustand holen
+	DSTATES		*d;
+	ulong		i;
+
+	//Alle bisherigen DEA-Zustände
+	for( i = 0; i < dstatesStackPos; i++)
+	{
+		//Zeiger
+		d = dstatesStack[i];
+
+		//unmarkiert?
+		if( d->marked == false )
+			//Ja
+			return( i );
+	}
+
+	//es gibt keine unmarkierten DEA-Zustände mehr
+	return( -1 );
+}
+
+
+void ssLexClass::markDStates( ulong index )
+{
+	//einen unmarkierten DEA-Zustand markieren
+	DSTATES		*d = dstatesStack[index];
+	ulong		i;
+
+	//markieren
+	d->marked = true;
+}
+
+
+void ssLexClass::insertDTran( SC_STR *sc, ulong from, ulong to, char c )
+{
+	//einen Zustandsübergang in die DEA-Übergangstabelle eintragen
+	DTRAN	**tmp1, *tmp2;
+	ulong	i;
+
+	//neue Zeile erzeugen?
+	if( !sc->DTran || ( ( sc->DTranCnt - 1 ) < from ) )
+	{
+		//genug Speicher für alle Zeilen
+		tmp1 = new( DTRAN *[from + 1] );
+
+		//initialisieren
+		memset( tmp1, 0, sizeof( DTRAN * ) * ( from + 1 ) );
+
+		//umkopieren
+		memcpy( tmp1, sc->DTran, sizeof( DTRAN * ) * sc->DTranCnt );
+
+		//Speicher für alle leeren Zeilen anfordern
+		for( i = 0; i < ( from + 1 ); i++ )
+		{
+			//leer?
+			if( !tmp1[i] )
+			{
+				//Ja, Speicher anfordern
+				tmp2 = new( DTRAN );
+
+				//initialisieren
+				memset( tmp2, 0, sizeof( DTRAN ) );
+
+				//Speicher für die Übergänge
+				tmp2->to = new( ulong[cclWidth] );
+
+				//DEA-Index
+				tmp2->index = from;
+
+				//eintragen
+				tmp1[i] = tmp2;
+
+				//zählen
+				sc->DTranCnt++;
+			}
+		}
+
+		//alten Speicher freigeben
+		if( sc->DTran )
+			delete( sc->DTran );
+
+		//Adresse
+		sc->DTran = tmp1;
+	}
+
+	//Übergang eintragen
+	sc->DTran[from]->index = from;
+	sc->DTran[from]->to[c] = to;
+}
+
+
+
+void ssLexClass::NEA2DEA( void )
+{
+	//die NEAen in DEAen wandeln
+	ECLOS_STR	*eclosStr;
+	MOVE_STR	*moveStr;
+	NEA_STR		*nea;
+	SC_STR		*sc;
+	ulong		i, j, k;
+	long		deaIndex, newDEAIndex;
+	ulong		begLineDEAIndex;
+	bool		SChasbegLineNEA;
+
+	//alle DEA-Zustände werden fortlaufend nummeriert
+	deaIndexCnt = 0;
+
+	//die DEA-Übergangstabelle aller SC
+	for( i = 0; i < scStrAnz; i++ )
+	{
+		//Zeiger auf SC
+		sc = &scStr[i];
+
+		//gibt es überhaupt NEAen?
+		if( sc->neaArrCnt )
+		{
+			//Debug-Meldung
+			cout << "SC: " << sc->name << "\n";
+
+			//initialisieren
+			SChasbegLineNEA = false;
+
+			//den Start-Index des DEA merken, bei dem die NEA auch am Zeilenanfang stehen dürfen
+			sc->DEAIndex = deaIndexCnt;
+
+			//WICHTIG: DSTATES initialisieren
+			initDStatesStack();
+
+			//e-clos für den ersten Zustand des DEA initialisieren
+			eclosStr = createEClos();
+
+			//der erste DEA-Zustand ist e-closure(Start-Zustände aller NEAen dieser SC)
+			//keine <<EOF>>-NEAen!
+			for( j = 0; j < sc->neaArrCnt; j++ )
+			{
+				//Zeiger auf NEA
+				nea = sc->neaArr[j];
+
+				//<<EOF>>-NEA?
+				if( nea->eof == false )
+				{
+					//zuerst ohne NEAen, die nur am Zeilenanfang stehen dürfen
+					if( nea->begLine == true )
+						//SC hat NEAen, die nur am Zeilenanfang stehen dürfen
+						SChasbegLineNEA = true;
+
+					else
+					{
+						//Zustand eintragen
+						insertFromEClos( eclosStr, sc->neaArr[j]->startState );
+
+						//NEA ausgeben
+						outputNEA( sc->neaArr[j] );
+					}
+				}
+			}
+
+			//e-clos generieren
+			generateEClos( eclosStr );
+
+			//diese Zustandsmenge in DSTATES eintragen
+			insertDStates( eclosStr->to, eclosStr->toCnt );
+
+			//solange unmarkierte DEA-Zustände auf dem Stack sind
+			while( ( deaIndex = getUnmarkedDStates() ) >= 0 )
+			{
+				//markieren
+				markDStates( deaIndex );
+
+				//alle Zeichen
+				for( k = 0; k < cclWidth; k++ )
+				{
+					//move( deaIndex, k ) bilden
+					moveStr = createMove( k );
+
+					//die NEA-Zustände des DEA-Zustandes deaIndex eintragen
+					insertFromMove( moveStr, dstatesStack[deaIndex]->neaIndex, dstatesStack[deaIndex]->neaIndexCnt );
+
+					//Übergänge generieren
+					generateMove( moveStr );
+
+					//Wurden Zustände erzeugt?
+					if( moveStr->toCnt )
+					{
+						//nun e-closure( move( deaIndex, k ) ) bilden
+						eclosStr = createEClos();
+
+						//Zustände eintragen
+						insertFromEClos( eclosStr, moveStr->to, moveStr->toCnt );
+
+						//generieren
+						generateEClos( eclosStr );
+
+						//Wurden Zustände erzeugt?
+						if( eclosStr->toCnt )
+						{
+							//diese neue NEA-Zustandsmenge ist eine DEA-Zustand, eintragen
+							newDEAIndex = insertDStates( eclosStr->to, eclosStr->toCnt );
+
+							//Debug-Meldung
+							cout << "DTran[" << dstatesStack[deaIndex]->deaIndex << "][" << ( char ) k << "] = " << newDEAIndex << "\n";
+
+							//in DEA-Zustandsübergangstabelle eintragen
+							insertDTran( sc, dstatesStack[deaIndex]->deaIndex, newDEAIndex, k );
+						}
+					}
+
+					//Speicher für eclos freigeben
+					delete( moveStr->from );
+					delete( moveStr );
+				}
+			}
+
+			//Speicher für eclos freigeben
+			delete( eclosStr->from );
+			delete( eclosStr );
+
+			//die DEA-Zustände ausgeben
+			outputDEAStates();
+
+			//DSTATES deinitialisieren
+			removeDStatesStack();
+
+
+			//hat die SC NEAen, die ausschließelich am Zeilenanfang stehen dürfen?
+			if( SChasbegLineNEA == true )
+			{
+				//Nun die NEAen betrachten, die ausschließlich am Zeilenanfang stehen müssen!
+
+				//den Start-Index des DEA merken, bei dem die NEA auch am Zeilenanfang stehen dürfen
+				begLineDEAIndex = deaIndexCnt;
+
+
+				//WICHTIG: DSTATES initialisieren
+				initDStatesStack();
+
+				//e-clos für den ersten Zustand des DEA initialisieren
+				eclosStr = createEClos();
+
+				//der erste DEA-Zustand ist e-closure(Start-Zustände aller NEAen dieser SC)
+				//keine <<EOF>>-NEAen!
+				for( j = 0; j < sc->neaArrCnt; j++ )
+				{
+					//Zeiger auf NEA
+					nea = sc->neaArr[j];
+
+					//<<EOF>>-NEA?
+					if( nea->eof == false )
+					{
+						//Zustand eintragen
+						insertFromEClos( eclosStr, sc->neaArr[j]->startState );
+
+						//NEA ausgeben
+						outputNEA( sc->neaArr[j] );
+					}
+				}
+
+				//e-clos generieren
+				generateEClos( eclosStr );
+
+				//diese Zustandsmenge in DSTATES eintragen
+				insertDStates( eclosStr->to, eclosStr->toCnt );
+
+				//solange unmarkierte DEA-Zustände auf dem Stack sind
+				while( ( deaIndex = getUnmarkedDStates() ) >= 0 )
+				{
+					//markieren
+					markDStates( deaIndex );
+
+					//alle Zeichen
+					for( k = 0; k < cclWidth; k++ )
+					{
+						//move( deaIndex, k ) bilden
+						moveStr = createMove( k );
+
+						//die NEA-Zustände des DEA-Zustandes deaIndex eintragen
+						insertFromMove( moveStr, dstatesStack[deaIndex]->neaIndex, dstatesStack[deaIndex]->neaIndexCnt );
+
+						//Übergänge generieren
+						generateMove( moveStr );
+
+						//Wurden Zustände erzeugt?
+						if( moveStr->toCnt )
+						{
+							//nun e-closure( move( deaIndex, k ) ) bilden
+							eclosStr = createEClos();
+
+							//Zustände eintragen
+							insertFromEClos( eclosStr, moveStr->to, moveStr->toCnt );
+
+							//generieren
+							generateEClos( eclosStr );
+
+							//Wurden Zustände erzeugt?
+							if( eclosStr->toCnt )
+							{
+								//diese neue NEA-Zustandsmenge ist eine DEA-Zustand, eintragen
+								newDEAIndex = insertDStates( eclosStr->to, eclosStr->toCnt );
+
+								//Debug-Meldung
+								cout << "DTran[" << dstatesStack[deaIndex]->deaIndex << "][" << ( char ) k << "] = " << newDEAIndex << "\n";
+
+								//in DEA-Zustandsübergangstabelle eintragen
+								insertDTran( sc, dstatesStack[deaIndex]->deaIndex, newDEAIndex, k );
+							}
+						}
+
+						//Speicher für eclos freigeben
+						delete( moveStr->from );
+						delete( moveStr );
+					}
+				}
+
+				//Speicher für eclos freigeben
+				delete( eclosStr->from );
+				delete( eclosStr );
+
+				//die DEA-Zustände ausgeben
+				outputDEAStates();
+
+				//DSTATES deinitialisieren
+				removeDStatesStack();
+
+				//den Start-Zustand dieses DEA merken
+				sc->begLineDEAIndex = begLineDEAIndex;
+			}
+
+			else
+				//SC hat keine NEAen, die nur am Zeilenanfang stehen dürfen
+				sc->begLineDEAIndex = -1;
+		}
+	}
+}
+
+
+void ssLexClass::outputDEAStates( void )
+{
+	//die DEA-Zustände ausgeben mit den zugehörigen NEA-Zuständen
+	DSTATES	*d;
+	ulong	i, j;
+
+	//die DEA-Zustände befinden sich in dstatesStack
+	for( i = 0; i < dstatesStackPos; i++ )
+	{
+		//Zeiger auf DSTATES
+		d = dstatesStack[i];
+
+		//ausgeben
+		cout << "DEA(" << d->deaIndex << ") = { ";
+
+		//Alle NEA-Zustände
+		for( j = 0; j < d->neaIndexCnt; j++ )
+			cout << " " << d->neaIndex[j] << " ";
+
+		//abschließen
+		cout << "}\n";
+	}
+}
+
+
+\}
+

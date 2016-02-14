@@ -1,0 +1,50 @@
+/* Konfigurations-Datei zum LR-Parser-Generator SSLR */
+
+/*
+Ausgabe in Datei
+;FILE
+;SCREEN
+;PRINTER
+*/
+DEST			=	FILE
+
+/* Ausgabe der Fehler in Datei */
+ERR_DEST		=	SCREEN
+
+/* Analyse der Grammatik ausgeben */
+ANALYZE			=	ON
+
+/* LR-Items ausgeben */
+SHOW_ITEMS		=	ON
+
+/* LR-Tabelle komprimieren */
+COMPRESS		=	OFF
+
+/* LR-Tabelle ausgeben */
+LR_TAB			=	ON
+
+/*
+;Parsertyp
+;LR
+;LALR
+;SLR
+*/
+TYPE			=	SLR
+
+/* DEBUG-Version des Parsers erzeugen */
+DEBUG			=	ON
+
+/* Grammatik in BNF ausgeben */
+OUTPUT_GRAMMAR	=	OFF
+
+/* FOLLOW-Mengen ausgeben */
+FOLLOW			=	ON
+
+/* FIRST-Mengen ausgeben */
+FIRST			=	ON
+
+/* Gr”že der Grammatik-Hash-Tabelle */
+HASH_TAB_SIZE	=	2000
+
+/* Max. Anzahl der Zeichen pro Zeile */
+MAX_CHAR		=	60

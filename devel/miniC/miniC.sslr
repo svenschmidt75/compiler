@@ -1,0 +1,3164 @@
+/*
+;Grammatik zu MINI-C aus 'Praxis des Compilerbaus'
+;-------------------------------------------------
+
+
+Mein erster Compiler.
+Ab: 26.02.05
+
+Last Modified: 31.03.05
+Sven Schmidt
+s.schmidt@lboro.ac.uk
+*/
+
+
+%include
+\{
+	//miniC initialisieren
+	#define SSLR_INIT
+
+\}
+
+
+%definition
+
+	private:
+
+
+	/*
+		In einem Block können lokale Bezeichner vereinbart werden. Für diese muss
+		auf dem Laufzeit-Stack Platz geschaffen werden (mittels des link-Befehls).
+	*/
+	vector<long>				localVarStr;
+
+
+
+	//Offset für die lokalen Variablen
+	enum{ _CHAR = 2, _BOOL = 2, _SHORT = 2, _INT = 4, _LONG = 4 };
+
+	//fürs Casten
+	enum{ LEFT, RIGHT };
+
+	/* Verschachtelungstiefe */
+	int							blkNum;
+
+	//den Typ der Vereinbarung merken
+	CSymbolTable::storageType	stType;
+
+	//Zeiger auf die Symboltabelle
+	CSymbolTable				*symTab;
+
+	//Zeiger auf den Syntaxbaum
+	CSyntaxTree					*syntaxTree;
+
+	//Zeiger auf die Codeerzeugung
+	CCodeBase					*codeBase;
+
+	//Command line arguments
+	ARGV_STR					*argvStr;
+
+	/*
+		In jedem Block (0=global definierte Variablen) bzw. Verschachtelungstiefe können
+		Variablen definiert werden, für die später auf dem Laufzeit-Stack Platz
+		geschaffen werden muss. Hier wird für jeden Block eine entsprechende Variable
+		geführt, die für den jeweiligen Block den Offset relativ zur Start-Adresse des
+		Laufzeit-Stacks führt.
+	*/
+	unsigned long				*varOffsetStack;
+
+	//Zähler für den Offset
+	unsigned long 				varOffsetStackPos;
+
+	//Anzahl der maximalen Elemente von varOffsetStack
+	unsigned long				varOffsetStackMaxPos;
+
+	//Zähler für den Offset für die lokalen Variablen
+	long						localVariableOffsetCnt;
+
+
+
+
+	//initialisieren
+	void init( void );
+
+	//deinitialisieren
+	void deinit( void );
+
+	//Offset für lokale Variablen merken
+	void pushVarOffsetStack( void );
+
+	//Offset für lokale Variablen vom Stack holen
+	void popVarOffsetStack( void );
+
+	//Offset für lokale Variablen anpassen
+	void adjustVarOffset( CSymbolTable::storageType );
+
+	/*
+		Wenn zwei Operanden inkompatibel sind, dann müssen sie durch einen cast kompatibel gemacht werden.
+		     lt: Typ des linken Operanden
+		     rt: Typ des rechten Operanden
+		newType: der gemeinsame Typ beider Operanden nach dem cast
+		  which: LEFT:  linker Operand muss gecastet werden
+				 RIGHT: rechter Operand muss gecastet werden
+		     op: Cast-Operator
+	*/
+	bool cast( CSymbolTable::storageType, CSymbolTable::storageType, CSymbolTable::storageType &, int &,
+	CSyntaxTree::STOperator & );
+
+	/*
+		Bei einer Zuweisung
+		a = b;
+
+		muss die rechte Seite auf den Typ von a gecastet werden, auch, wenn dann Informationen
+		verloren gehen.
+		lt: Typ des linken Operanden
+		rt: Typ des rechten Operanden
+		op: Cast-Operator
+	*/
+	bool forceCast( CSymbolTable::storageType, CSymbolTable::storageType, CSyntaxTree::STOperator & );
+
+
+
+
+
+	public:
+
+	//dem Parser einige Variablen übergeben
+	void giveArgs( ARGV_STR *, CSymbolTable *, CSyntaxTree *, CCodeBase * );
+
+
+
+
+%union
+{
+	//Attribut
+	int							_a;
+
+	//Fließpunkt-Zahl
+	double						_float;
+
+	//Integer-Zahl
+	long						_integer;
+
+	//Index für Symboltabellen-Eintrag
+	long						_symTabIndex;
+
+	//Index für Node/Leaf im Systaxbaum
+	long						_syntaxTreeIndex;
+
+	//den Namen eines Bezeichners
+	char						*_name;
+
+	//Typ für eine Variablenvereinbarung
+	CSymbolTable::storageType	_type;
+}
+
+
+//Typen für die semantischen Aktionen zuordnen
+%ntermType <_type> type_specifier
+%ntermType <_symTabIndex> declarator_list
+%ntermType <_syntaxTreeIndex> factor expr term stmt stmt_list
+
+%termType <_name> IDENT
+%termType <_integer> NUMBER
+
+
+//Assoziativitäten und Prioritäten der Terminale
+%nonassoc IF_STMT
+%nonassoc ELSE_STMT
+
+%right EQU
+%left LOG_OR
+%left LOG_AND
+%left BIN_OR
+%left BIN_XOR
+%left BIN_AND
+%right BIN_NOT
+%left EQUAL NOTEQUAL
+%left LESS GREATER LESS_EQU GREATER_EQU
+%left LEFT_SHIFT RIGHT_SHIFT
+%left ADD SUB
+%left MUL DIV MOD
+//%right UMINUS
+
+
+
+%grammar
+
+
+
+program
+		->	 definitions
+		;
+
+definitions
+		->	definition
+		|	definitions definition
+		;
+
+
+definition
+/*
+	Hier folgt das Hauptprogramm.
+	Hier können auch Alternativen eingeführt werden, die die Benutzung von Funktionen
+	erlaubt, also z.B.
+
+	|	function_definition
+
+function_definition
+	->	'IDENT' '(' parameter_declarations compound_statement
+	;
+
+*/
+		->	stmt_list
+\{
+	//Codeerzeugung aufrufen
+	codeBase->print( $1 );
+\}
+		;
+
+
+declarations
+		->	declarations declaration
+		|	declaration
+		;
+
+
+declaration
+/*
+	Hier folgt die Deklaration von Varaiblen der Art
+
+	int a, b, c;
+*/
+		->	type_specifier declarator_list 'SEMIKOLON'
+		;
+
+
+declarator_list
+		->	'IDENT'
+\{
+	/*
+		Eine Vereinbarung treffen, z.B. eine Variable.
+		Der Typ steht in stType.
+	*/
+
+	//in Symboltabelle eintragen
+	$$ = symTab->insert( $1, blkNum, SSLR_line );
+
+	//schon eingetragen?
+	if( $$ == -1 )
+	{
+		//ja, Redeklaration
+		cerr << "miniC: Line " << SSLR_line << ": " << $1 << " already declared!" << endl;
+	}
+
+	else
+	{
+		//Typ eintragen
+		symTab->setType( $$, CSymbolTable::_VAR );
+
+		//Storage type eintragen
+		symTab->setStorageType( $$, stType );
+
+		//den Offset eintragen
+		symTab->setOffset( $$, localVariableOffsetCnt );
+
+		//für die nächste Variable anpassen
+		adjustVarOffset( stType );
+	}
+\}
+		|	declarator_list 'COMMA' 'IDENT'
+\{
+	/*
+		Eine Vereinbarung treffen, z.B. eine Variable.
+		Der Typ steht in stType.
+	*/
+
+	//in Symboltabelle eintragen
+	$$ = symTab->insert( $3, blkNum, SSLR_line );
+
+	//schon eingetragen?
+	if( $$ == -1 )
+	{
+		//ja, Redeklaration
+		cerr << "miniC: Line " << SSLR_line << ": " << $3 << " already declared!" << endl;
+	}
+
+	else
+	{
+		//Typ eintragen
+		symTab->setType( $$, CSymbolTable::_VAR );
+
+		//Storage type eintragen
+		symTab->setStorageType( $$, stType );
+
+		//den Offset eintragen
+		symTab->setOffset( $$, localVariableOffsetCnt );
+
+		//für die nächste Variable anpassen
+		adjustVarOffset( stType );
+	}
+\}
+		;
+
+
+type_specifier
+/*
+	Hier müssen wir den Typ der zu deklarierenden Variablen in eine globale Variable
+	speichern, da dieses Attribut nicht auf den Parse-Stack nach unten vererbt werden kann.
+	Wenn der Parser also in declarator_list ist, sieht er nur die Bezeichner, nicht
+	aber den Typ.
+*/
+		->	'CHAR'
+\{
+	//zu deklarierende Bezeichner sind vom Typ char
+	stType = CSymbolTable::_CHAR;
+\}
+		|	'BOOL'
+\{
+	//zu deklarierende Bezeichner sind vom Typ bool
+	stType = CSymbolTable::_BOOL;
+\}
+		|	'SHORT'
+\{
+	//zu deklarierende Bezeichner sind vom Typ short
+	stType = CSymbolTable::_SHORT;
+\}
+		|	'INT'
+\{
+	//zu deklarierende Bezeichner sind vom Typ int
+	stType = CSymbolTable::_INT;
+\}
+		|	'LONG'
+\{
+	//zu deklarierende Bezeichner sind vom Typ long
+	stType = CSymbolTable::_LONG;
+\}
+	;
+
+
+stmt_list
+		->	 stmt
+\{
+	long	index = $1;
+
+	//Wurzel des Syntaxbaumes für das statement hier ablegen?
+	if( $1 != -1 )
+	{
+		//Syntaxbaum ausgeben
+//		syntaxTree->printSyntaxTree( $1 );
+
+		//merken
+		$$ = index;
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+
+
+
+
+
+
+
+	cout << "stmt:" << endl;
+	cout << "$$: " << $$ << endl;
+	cout << "1: " << $1 << endl;
+	cout << endl;
+\}
+		|	 stmt_list stmt
+\{
+	long	index1 = $1, index2 = $2;
+
+	//Wurzel des Syntaxbaumes für das statement hier ablegen?
+	if( ( $1 != -1 ) && ( $2 != -1 ) )
+	{
+		//Statements verketten
+		syntaxTree->linkStmt( $1, $2 );
+
+		//Syntaxbaum ausgeben
+//		syntaxTree->printSyntaxTree( $2 );
+
+		//merken
+		$$ = $2;
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+
+
+
+
+
+
+
+	cout << "stmt_list stmt:" << endl;
+	cout << "$$: " << $$ << endl;
+	cout << "1: " << $1 << endl;
+	cout << "2: " << $2 << endl;
+	cout << endl;
+\}
+		;
+
+stmt
+		->	'IDENT' 'EQU' expr 'SEMIKOLON'
+\{
+	//$1 = $3;
+	CSymbolTable::varType	varType;
+
+	//der Identifier muss hier bereits deklariert sein
+	long index = symTab->find( $1 );
+
+	/*
+		Auch Zahlen werden in die Symboltabelle eingetragen.
+		Zuweisungen können NUR an Variablen vorgenommen werden, nicht
+		Zahlen.
+	*/
+
+	//Typ holen
+	varType = symTab->getType( index );
+
+	//nicht Variable?
+	if( varType != CSymbolTable::_VAR )
+	{
+		//Zuweisung nicht an Variable!
+		cerr << "miniC: Line " << SSLR_line << ": " << $1 << " not an lvalue!" << endl;
+
+		//Zustand merken
+		$$ = -1;
+	}
+
+	//Variable nicht deklariert?
+	else if( index < 0 )
+	{
+		//nein, Fehler
+		cerr << "miniC: Line " << SSLR_line << ": " << $1 << " undeclared!" << endl;
+
+		//Zustand merken
+		$$ = -1;
+	}
+
+	else if( $3 != -1 )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+
+		//ein Leaf für den LValue erzeugen
+		long lval = syntaxTree->makeLeaf( index, -1 );
+
+		//Knoten für Zuweisung erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_EQU, -1, lval, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( lval, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		/*
+			Wenn auf lokale Variablen ausserhalb des aktuellen Blocks zugegriffen wird,
+			dann muss man sich anhand der link-Befehle zum Stackframe "hangeln", in dem
+			die Vereinbarung getroffen wurde.
+		*/
+
+		//die Blocktiefe der Vereinbarung holen
+		int	localVarBlkNum = symTab->getBlkDepth( index );
+
+		//Differenz eintragen
+		syntaxTree->setBlkDiff( lval, blkNum - localVarBlkNum );
+
+
+
+		//den Datentyp der Vereinbarung der Zuweisung holen
+		lt = symTab->getStorageType( index );
+
+		//den Datentyp ins Leaf eintragen
+		syntaxTree->setStorageType( lval, lt );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//die rechte Seite muss auf den Typ der linken Seite gecastet werden
+		if( forceCast( lt, rt, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+				Es iwrd IMMER das rechte King gecastet!
+			*/
+			//Warnung ausgeben, da bei einem Zuweisungscast meist Informationen verloren gehen
+			cerr << "miniC: Line " << SSLR_line << ": Possible loss of information in assignment!" << endl;
+
+			//das rechte Kind casten, Cast-Knoten erzeugen
+			castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+			//das rechte Kind des =-Knoten korrigieren
+			syntaxTree->setChildren( $$, lval, castNode );
+
+			//dem Cast-Knoten IMMER den Datentyp der Zuweisung zuweisen
+			syntaxTree->setStorageType( castNode, lt );
+
+			//Parent des rechten Kindes ist der Cast-Knoten
+			syntaxTree->setParent( $3, castNode );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//dem =-Knoten IMMER einen Datentyp der Zuweisung zuweisen
+		syntaxTree->setStorageType( $$, lt );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+
+
+
+
+
+
+
+	cout << "'IDENT' 'EQU' expr 'SEMIKOLON': " << $$ << endl;
+\}
+		|	'DO' stmt 'WHILE' expr 'SEMIKOLON'
+\{
+	//Fehler?
+	if( $2 != -1 )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		long						l1, l2, castNode = $4;
+
+		//Knoten für DO-WHILE-Statement erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_DOWHILE, -1, -1, -1 );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//die expr-Anweisung in einem while-Statement muss bool als Ergebnis zurückliefern
+		lt = CSymbolTable::_BOOL;
+
+		//Datentyp des expr-Teils holen
+		rt = syntaxTree->getStorageType( $4 );
+
+		//die expr-Anweisung muss auf BOOL gecastet werden?
+		if( forceCast( lt, rt, op ) == true )
+		{
+			//expr-Anweisung auf BOOL-Datentyp casten
+
+			//Warnung ausgeben, da bei einem Zuweisungscast meist Informationen verloren gehen
+			cerr << "miniC: Line " << SSLR_line << ": Expression in while statement must be of type boolean!" << endl;
+
+			//expr casten
+			castNode = syntaxTree->makeNode( op, -1, -1, $4 );
+
+			//Ergebnis muss BOOL sein
+			syntaxTree->setStorageType( castNode, CSymbolTable::_BOOL );
+
+			//Parent von expr ist der Cast-Knoten
+			syntaxTree->setParent( $4, castNode );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+
+		//der expr-Teil hat als parent den WHILE-Node
+		syntaxTree->setParent( castNode, $$ );
+
+		//Sprung-Ziel vor dem stmt-Teil
+		l1 = syntaxTree->makeNode( CSyntaxTree::_LABEL, -1, -1, -1 );
+		syntaxTree->genJumpLabel( l1 );
+
+		//Sprung-Ziel hinter der Schleife
+		l2 = syntaxTree->makeNode( CSyntaxTree::_LABEL, -1, -1, -1 );
+		syntaxTree->genJumpLabel( l2 );
+
+		//Informationen eintragen
+		syntaxTree->setIfStmt( $$, castNode, $2, -1, l1, l2 );
+	}
+
+	else
+		//keine Code-Erzeugung
+		$$ = -1;
+
+
+
+
+
+
+
+	cout << "'DO' stmt 'WHILE' expr 'SEMIKOLON': " << $$ << endl;
+\}
+		|	'WHILE' expr stmt
+\{
+	//Fehler?
+	if( $2 != -1 )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		long						l1, l2, castNode = $2;
+
+		//Knoten für WHILE-Statement erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_WHILE, -1, -1, -1 );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//die expr-Anweisung in einem while-Statement muss bool als Ergebnis zurückliefern
+		lt = CSymbolTable::_BOOL;
+
+		//Datentyp des expr-Teils holen
+		rt = syntaxTree->getStorageType( $2 );
+
+		//die expr-Anweisung muss auf BOOL gecastet werden?
+		if( forceCast( lt, rt, op ) == true )
+		{
+			//expr-Anweisung auf BOOL-Datentyp casten
+
+			//Warnung ausgeben, da bei einem Zuweisungscast meist Informationen verloren gehen
+			cerr << "miniC: Line " << SSLR_line << ": Expression in while statement must be of type boolean!" << endl;
+
+			//expr casten
+			castNode = syntaxTree->makeNode( op, -1, -1, $2 );
+
+			//Ergebnis muss BOOL sein
+			syntaxTree->setStorageType( castNode, CSymbolTable::_BOOL );
+
+			//Parent von expr ist der Cast-Knoten
+			syntaxTree->setParent( $2, castNode );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+
+		//der expr-Teil hat als parent den WHILE-Node
+		syntaxTree->setParent( castNode, $$ );
+
+		//Sprung-Ziel vor dem expr-Teil
+		l1 = syntaxTree->makeNode( CSyntaxTree::_LABEL, -1, -1, -1 );
+		syntaxTree->genJumpLabel( l1 );
+
+		//Sprung-Ziel hinter dem stmt-Teil
+		l2 = syntaxTree->makeNode( CSyntaxTree::_LABEL, -1, -1, -1 );
+		syntaxTree->genJumpLabel( l2 );
+
+		//Informationen eintragen
+		syntaxTree->setIfStmt( $$, castNode, $3, -1, l1, l2 );
+	}
+
+	else
+		//keine Code-Erzeugung
+		$$ = -1;
+
+
+
+
+
+
+
+	cout << "'WHILE' expr stmt: " << $$ << endl;
+\}
+		|	'IF_STMT' expr stmt 'ELSE_STMT' stmt
+\{
+	//Fehler?
+	if( $2 != -1 )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		long						l1, l2, castNode = $2;
+
+		//Knoten für IF-Statement erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_IF, -1, -1, -1 );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//die expr-Anweisung in einem if-Statement muss bool als Ergebnis zurückliefern
+		lt = CSymbolTable::_BOOL;
+
+		//Datentyp des expr-Teils holen
+		rt = syntaxTree->getStorageType( $2 );
+
+		//die expr-Anweisung muss auf BOOL gecastet werden?
+		if( forceCast( lt, rt, op ) == true )
+		{
+			//expr-Anweisung auf BOOL-Datentyp casten
+
+			//Warnung ausgeben, da bei einem Zuweisungscast meist Informationen verloren gehen
+			cerr << "miniC: Line " << SSLR_line << ": Expression in if statement must be of type boolean!" << endl;
+
+			//expr casten
+			castNode = syntaxTree->makeNode( op, -1, -1, $2 );
+
+			//Ergebnis muss BOOL sein
+			syntaxTree->setStorageType( castNode, CSymbolTable::_BOOL );
+
+			//Parent von expr ist der Cast-Knoten
+			syntaxTree->setParent( $2, castNode );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+
+		//der expr-Teil hat als parent den IF-Node
+		syntaxTree->setParent( castNode, $$ );
+
+		//Sprung-Ziel vor dem stmt2-Teil
+		l1 = syntaxTree->makeNode( CSyntaxTree::_LABEL, -1, -1, -1 );
+		syntaxTree->genJumpLabel( l1 );
+
+		//Sprung-Ziel hinter dem stmt2-Teil
+		l2 = syntaxTree->makeNode( CSyntaxTree::_LABEL, -1, -1, -1 );
+		syntaxTree->genJumpLabel( l2 );
+
+		//Informationen eintragen
+		syntaxTree->setIfStmt( $$, castNode, $3, $5, l1, l2 );
+	}
+
+	else
+		//keine Code-Erzeugung
+		$$ = -1;
+
+
+
+
+
+
+
+	cout << "'IF_STMT' expr stmt 'ELSE_STMT' stmt: " << $$ << endl;
+\}
+		|	'IF_STMT' expr stmt
+\{
+	//Fehler?
+	if( $2 != -1 )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		long						l1, castNode = $2;
+
+		//Knoten für IF-Statement erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_IF, -1, -1, -1 );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//die expr-Anweisung in einem if-Statement muss bool als Ergebnis zurückliefern
+		lt = CSymbolTable::_BOOL;
+
+		//Datentyp des expr-Teils holen
+		rt = syntaxTree->getStorageType( $2 );
+
+		//die expr-Anweisung muss auf BOOL gecastet werden?
+		if( forceCast( lt, rt, op ) == true )
+		{
+			//expr-Anweisung auf BOOL-Datentyp casten
+
+			//Warnung ausgeben, da bei einem Zuweisungscast meist Informationen verloren gehen
+			cerr << "miniC: Line " << SSLR_line << ": Expression in if statement must be of type boolean!" << endl;
+
+			//expr casten
+			castNode = syntaxTree->makeNode( op, -1, -1, $2 );
+
+			//Ergebnis muss BOOL sein
+			syntaxTree->setStorageType( castNode, CSymbolTable::_BOOL );
+
+			//Parent von expr ist der Cast-Knoten
+			syntaxTree->setParent( $2, castNode );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+
+		//der expr-Teil hat als parent den IF-Node
+		syntaxTree->setParent( castNode, $$ );
+
+		//Sprung-Ziel hinter dem stmt1-Teil
+		l1 = syntaxTree->makeNode( CSyntaxTree::_LABEL, -1, -1, -1 );
+		syntaxTree->genJumpLabel( l1 );
+
+		//Informationen eintragen
+		syntaxTree->setIfStmt( $$, castNode, $3, -1, -1, l1 );
+	}
+
+	else
+		//keine Code-Erzeugung
+		$$ = -1;
+
+
+
+
+
+
+
+	cout << "'IF_STMT' expr stmt: " << $$ << endl;
+\}
+		|	declarations
+\{
+	/*
+		Damit Deklarationen an beliebiger Stelle in einem compound statement
+		stehen können, müssen auch für Deklarationen Syntaxbaum-Nodes
+		angelegt werden, die aber nur für die Aufrechterhaltung der
+		Verkettung der Syntaxbäume angelegt werden. Das Problem:
+
+		Da diese Alternative in der stmt-Produktion auftritt, tauchen
+		diese in
+		stmt_list	-> stmt_list stmt
+		auf der rechten Seite auf. Aber genau hier wird die Verkettung
+		der Statements durchgeführt, also muss bei $2 ein Syntaxbaum-Node
+		stehen.
+	*/
+
+	//Knoten für die Vekettung der Statements erzeugen
+	$$ = syntaxTree->makeNode( CSyntaxTree::_DUMMY_STMT, -1, -1, -1 );
+
+
+
+
+	cout << "declarations: " << $$ << endl;
+\}
+		|	expr 'SEMIKOLON'
+\{
+	//Knoten für die Vekettung der Statements erzeugen
+	$$ = syntaxTree->makeNode( CSyntaxTree::_DUMMY_STMT, -1, -1, -1 );
+
+	//Warnung ausgeben
+	cerr << "miniC: Line " << SSLR_line << ": Expression has no effect!" << endl;
+\}
+		|	'BOPEN' \{
+
+	/* Verschachtelungstiefe + 1 */
+	symTab->incBlockDepth();
+	blkNum++;
+
+	//den Offset für die lokalen Variablen merken
+	pushVarOffsetStack();
+
+	//zurücksetzen
+	localVariableOffsetCnt = 0;
+
+\} stmt_list 'BCLOSE'
+\{
+	/*
+		Ein Block kann lokale Variablen haben, die auf dem Laufzeit-Stack abgelegt werden.
+		Diese müssen am Ende des Blocks gelöscht werden.
+	*/
+
+	/*
+		Die Statements sind i.A. verkettet. In die Wurzel von _BLK_STMT wird
+		die Wurzel, d.h. das erste Statement in der Verkettung eingetragen.
+	*/
+	long root = syntaxTree->getRootStmt( $3 );
+
+	//Knoten für einen Block erzeugen
+	$$ = syntaxTree->makeNode( CSyntaxTree::_BLK_STMT, -1, -1, root );
+
+	//Informationen eintragen
+	syntaxTree->setLocalVar( $$, localVariableOffsetCnt );
+
+
+	/* Verschachtelungstiefe - 1*/
+	symTab->decBlockDepth();
+	blkNum--;
+
+	//den Offset für die lokalen Variablen zurückholen
+	popVarOffsetStack();
+
+
+
+
+
+
+
+	cout << "'BOPEN' stmt_list 'BCLOSE': " << $$ << endl;
+\}
+		;
+
+expr
+/*
+	Hier muss unbedingt die Assoziativität/Priorität der Terminale
+	LESS, GREATER, ... geklärt werden, damit also klar ist, was
+
+	a > b < c
+
+	bedeuten soll.
+*/
+		->	expr 'LESS' expr
+\{
+	//$1 < $3
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für "kleiner" erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_LT, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//der <-Knoten ist immer vom Datentyp BOOL
+		syntaxTree->setStorageType( $$, CSymbolTable::_BOOL );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'GREATER' expr
+\{
+	//$1 > $3
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für "größer" erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_GT, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//der <-Knoten ist immer vom Datentyp BOOL
+		syntaxTree->setStorageType( $$, CSymbolTable::_BOOL );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'LESS_EQU' expr
+\{
+	//$1 <= $3
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für "kleiner gleich" erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_LE, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//der <-Knoten ist immer vom Datentyp BOOL
+		syntaxTree->setStorageType( $$, CSymbolTable::_BOOL );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'GREATER_EQU' expr
+\{
+	//$1 >= $3
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für "größer gleich" erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_GE, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//der <-Knoten ist immer vom Datentyp BOOL
+		syntaxTree->setStorageType( $$, CSymbolTable::_BOOL );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'EQUAL' expr
+\{
+	//$1 == $3
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für "gleich" erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_EQ, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//der ==-Knoten ist immer vom Datentyp BOOL
+		syntaxTree->setStorageType( $$, CSymbolTable::_BOOL );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'NOTEQUAL' expr
+\{
+	//$1 != $3
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für "ungleich" erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_NEQ, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//der !=-Knoten ist immer vom Datentyp BOOL
+		syntaxTree->setStorageType( $$, CSymbolTable::_BOOL );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'LOG_AND' expr
+\{
+	//logisches und, &&
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		long						left = $1, right = $3, l1;
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//$1 muss BOLL sein
+		if( forceCast( CSymbolTable::_BOOL, lt, op ) == true )
+		{
+			//$1 auf BOOL casten
+
+			//Warnung ausgeben, da bei einem Zuweisungscast meist Informationen verloren gehen
+			cerr << "miniC: Line " << SSLR_line << ": Left expression in == must be of type boolean!" << endl;
+
+			//$1 auf BOOL casten
+			left = syntaxTree->makeNode( op, -1, -1, $1 );
+
+			//Ergebnis muss BOOL sein
+			syntaxTree->setStorageType( left, CSymbolTable::_BOOL );
+
+			//Parent von $1 ist der Cast-Knoten
+			syntaxTree->setParent( $1, left );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( left, SSLR_line  );
+		}
+
+		//$3 muss BOLL sein
+		if( forceCast( CSymbolTable::_BOOL, rt, op ) == true )
+		{
+			//$1 auf BOOL casten
+
+			//Warnung ausgeben, da bei einem Zuweisungscast meist Informationen verloren gehen
+			cerr << "miniC: Line " << SSLR_line << ": Right expression in == must be of type boolean!" << endl;
+
+			//$3 auf BOOL casten
+			right = syntaxTree->makeNode( op, -1, -1, $3 );
+
+			//Ergebnis muss BOOL sein
+			syntaxTree->setStorageType( right, CSymbolTable::_BOOL );
+
+			//Parent von $3 ist der Cast-Knoten
+			syntaxTree->setParent( $3, right );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( right, SSLR_line  );
+		}
+
+		//Knoten für && erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_LOG_AND, -1, left, right );
+
+		//Eltern eintragen
+		syntaxTree->setParent( left, $$ );
+		syntaxTree->setParent( right, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+		//der &&-Knoten ist immer vom Datentyp BOOL
+		syntaxTree->setStorageType( $$, CSymbolTable::_BOOL );
+
+
+		//Sprung-Ziel generieren
+		l1 = syntaxTree->makeNode( CSyntaxTree::_LABEL, -1, -1, -1 );
+		syntaxTree->genJumpLabel( l1 );
+
+		//das Sprungziel wird in die _ifStr-Struktur eingetragen
+		syntaxTree->setIfStmt( $$, -1, -1, -1, l1, -1 );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'LOG_OR' expr
+\{
+	//logisches oder, ||
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		long						left = $1, right = $3, l1, l2;
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//$1 muss BOLL sein
+		if( forceCast( CSymbolTable::_BOOL, lt, op ) == true )
+		{
+			//$1 auf BOOL casten
+
+			//Warnung ausgeben, da bei einem Zuweisungscast meist Informationen verloren gehen
+			cerr << "miniC: Line " << SSLR_line << ": Left expression in == must be of type boolean!" << endl;
+
+			//$1 auf BOOL casten
+			left = syntaxTree->makeNode( op, -1, -1, $1 );
+
+			//Ergebnis muss BOOL sein
+			syntaxTree->setStorageType( left, CSymbolTable::_BOOL );
+
+			//Parent von $1 ist der Cast-Knoten
+			syntaxTree->setParent( $1, left );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( left, SSLR_line  );
+		}
+
+		//$3 muss BOLL sein
+		if( forceCast( CSymbolTable::_BOOL, rt, op ) == true )
+		{
+			//$1 auf BOOL casten
+
+			//Warnung ausgeben, da bei einem Zuweisungscast meist Informationen verloren gehen
+			cerr << "miniC: Line " << SSLR_line << ": Right expression in == must be of type boolean!" << endl;
+
+			//$3 auf BOOL casten
+			right = syntaxTree->makeNode( op, -1, -1, $3 );
+
+			//Ergebnis muss BOOL sein
+			syntaxTree->setStorageType( right, CSymbolTable::_BOOL );
+
+			//Parent von $3 ist der Cast-Knoten
+			syntaxTree->setParent( $3, right );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( right, SSLR_line  );
+		}
+
+		//Knoten für || erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_LOG_OR, -1, left, right );
+
+		//Eltern eintragen
+		syntaxTree->setParent( left, $$ );
+		syntaxTree->setParent( right, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+		//der ||-Knoten ist immer vom Datentyp BOOL
+		syntaxTree->setStorageType( $$, CSymbolTable::_BOOL );
+
+
+		//Sprung-Ziel generieren
+		l1 = syntaxTree->makeNode( CSyntaxTree::_LABEL, -1, -1, -1 );
+		syntaxTree->genJumpLabel( l1 );
+
+		//Sprung-Ziel generieren
+		l2 = syntaxTree->makeNode( CSyntaxTree::_LABEL, -1, -1, -1 );
+		syntaxTree->genJumpLabel( l2 );
+
+		//das Sprungziel wird in die _ifStr-Struktur eingetragen
+		syntaxTree->setIfStmt( $$, -1, -1, -1, l1, l2 );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	'LOG_NOT' expr
+\{
+	//logisches nicht, !
+
+	//Fehler?
+	if( $2 != -1 )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		long						left = $2;
+
+		//Datentyp von $2 holen
+		lt = syntaxTree->getStorageType( $2 );
+
+		//$2 muss BOLL sein
+		if( forceCast( CSymbolTable::_BOOL, lt, op ) == true )
+		{
+			//$2 auf BOOL casten
+
+			//Warnung ausgeben, da bei einem Zuweisungscast meist Informationen verloren gehen
+			cerr << "miniC: Line " << SSLR_line << ": Expression in ! must be of type boolean!" << endl;
+
+			//$2 auf BOOL casten
+			left = syntaxTree->makeNode( op, -1, -1, $2 );
+
+			//Ergebnis muss BOOL sein
+			syntaxTree->setStorageType( left, CSymbolTable::_BOOL );
+
+			//Parent von $2 ist der Cast-Knoten
+			syntaxTree->setParent( $2, left );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( left, SSLR_line  );
+		}
+
+		//Knoten für ! erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_LOG_NOT, -1, -1, left );
+
+		//Eltern eintragen
+		syntaxTree->setParent( left, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+		//der !-Knoten ist immer vom Datentyp BOOL
+		syntaxTree->setStorageType( $$, CSymbolTable::_BOOL );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'LEFT_SHIFT' expr
+\{
+	//links shift, <<
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für << erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_LEFT_SHIFT, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//dem <<-Knoten einen Datentyp zuweisen
+		syntaxTree->setStorageType( $$, lt );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'RIGHT_SHIFT' expr
+\{
+	//rechts shift, >>
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für >> erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_RIGHT_SHIFT, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//dem >>-Knoten einen Datentyp zuweisen
+		syntaxTree->setStorageType( $$, lt );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'BIN_AND' expr
+\{
+	//binäres und, &
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für & erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_BIN_AND, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//dem &-Knoten einen Datentyp zuweisen
+		syntaxTree->setStorageType( $$, type );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'BIN_OR' expr
+\{
+	//binäres oder, |
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für | erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_BIN_OR, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//dem &-Knoten einen Datentyp zuweisen
+		syntaxTree->setStorageType( $$, type );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'BIN_XOR' expr
+\{
+	//binäres x-oder, ^
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für ^ erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_BIN_XOR, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//dem &-Knoten einen Datentyp zuweisen
+		syntaxTree->setStorageType( $$, type );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	'BIN_NOT' expr
+\{
+	//binäres nicht, ~
+
+	//Fehler?
+	if( $2 != -1 )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für ~ erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_BIN_NOT, -1, -1, $2 );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des Knotens holen
+		lt = syntaxTree->getStorageType( $2 );
+
+		//dem &-Knoten einen Datentyp zuweisen
+		syntaxTree->setStorageType( $$, lt );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'ADD' term
+\{
+	//$1 * $3
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für Addition erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_ADD, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//dem +-Knoten einen Datentyp zuweisen
+		syntaxTree->setStorageType( $$, type );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	expr 'SUB' term
+\{
+	//$1 - $3
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für Subtraktion erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_SUB, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//dem --Knoten einen Datentyp zuweisen
+		syntaxTree->setStorageType( $$, type );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	term
+\{
+	//weitergeben
+	$$ = $1;
+\}
+		;
+
+term
+		->	term 'MUL' factor
+\{
+	//Multiplikation
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für Multiplikation erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_MUL, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//dem *-Knoten einen Datentyp zuweisen
+		syntaxTree->setStorageType( $$, type );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	term 'DIV' factor
+\{
+	//Division
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		CSymbolTable::storageType	lt, rt, type;
+		CSyntaxTree::STOperator		op;
+		int							which;
+
+		//Knoten für Division erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_DIV, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+
+
+
+		//Datentyp des linken Knotens holen
+		lt = syntaxTree->getStorageType( $1 );
+
+		//Datentyp des rechten Knotens holen
+		rt = syntaxTree->getStorageType( $3 );
+
+		//casten?
+		if( cast( lt, rt, type, which, op ) == true )
+		{
+			long	castNode;
+
+			/*
+				Die mit beiden Kindern verbundene Typen sind inkompatibel, es muss eine
+				implizite Typkonvertierung vorgenommen werden.
+			*/
+
+			//linkes Kind casten?
+			if( which == LEFT )
+			{
+				//ja, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $1 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, castNode, $3 );
+
+				//Parent des rechten Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $1, castNode );
+			}
+
+			else
+			{
+				//das rechte Kind casten, Cast-Knoten erzeugen
+				castNode = syntaxTree->makeNode( op, $$, -1, $3 );
+
+				//das rechte Kind des *-Knoten korrigieren
+				syntaxTree->setChildren( $$, $1, castNode );
+
+				//Parent des linken Kindes ist der Cast-Knoten
+				syntaxTree->setParent( $3, castNode );
+			}
+
+			//dem Cast-Knoten einen Datentyp zuweisen
+			syntaxTree->setStorageType( castNode, type );
+
+			//Zeilennummer in den Knoten eintragen
+			syntaxTree->setLine( castNode, SSLR_line  );
+		}
+
+		//dem /-Knoten einen Datentyp zuweisen
+		syntaxTree->setStorageType( $$, type );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	term 'MOD' factor
+\{
+	//Modulo
+
+	//Fehler?
+	if( ( $1 != -1 ) && ( $3 != -1 ) )
+	{
+		//Knoten für Modulo erzeugen
+		$$ = syntaxTree->makeNode( CSyntaxTree::_MOD, -1, $1, $3 );
+
+		//Eltern eintragen
+		syntaxTree->setParent( $1, $$ );
+		syntaxTree->setParent( $3, $$ );
+
+		//Zeilennummer in den Knoten eintragen
+		syntaxTree->setLine( $$, SSLR_line  );
+	}
+
+	else
+		//Fehler
+		$$ = -1;
+\}
+		|	factor
+\{
+	//weitergeben
+	$$ = $1;
+\}
+		;
+
+factor
+		->	'KLOPEN' expr 'KLCLOSE'
+	/*
+		Eine Zahl ist eine Konstante. Erstmal dazu eine globale temp. Variable
+		erzeugen und den Wert der Zahl speichern.
+	*/
+\{
+	//weitergeben
+	$$ = $2;
+\}
+		|	'NUMBER'
+\{
+	//in Symboltabelle eintragen
+	long symTabIndex = symTab->insert( 0L, blkNum, SSLR_line );
+
+	//Typ eintragen
+	symTab->setType( symTabIndex, CSymbolTable::_NUMBER );
+
+	//Storage type eintragen
+	symTab->setStorageType( symTabIndex, CSymbolTable::_LONG );
+
+
+	//ein LEAF erzeugen
+	$$ = syntaxTree->makeLeaf( symTabIndex, -1 );
+
+	//Zahlenwert eintragen
+	syntaxTree->setNumber( $$, $1 );
+
+	//den Datentyp ins Leaf eintragen
+	syntaxTree->setStorageType( $$, CSymbolTable::_LONG );
+\}
+		|	'TRUE'
+\{
+	//in Symboltabelle eintragen
+	long symTabIndex = symTab->insert( 0L, blkNum, SSLR_line );
+
+	/*
+		Der Datentyp bool wird intern als Byte dargestellt, der 0 oder 1
+		sein kann. Also ist true eine Zahl mit Zahlenwert +1.
+	*/
+	symTab->setType( symTabIndex, CSymbolTable::_NUMBER );
+
+	//Storage type eintragen
+	symTab->setStorageType( symTabIndex, CSymbolTable::_BOOL );
+
+
+	//ein LEAF erzeugen
+	$$ = syntaxTree->makeLeaf( symTabIndex, -1 );
+
+	//Zahlenwert eintragen
+	syntaxTree->setNumber( $$, 1 );
+
+	//den Datentyp ins Leaf eintragen
+	syntaxTree->setStorageType( $$, CSymbolTable::_BOOL );
+\}
+		|	'FALSE'
+\{
+	//in Symboltabelle eintragen
+	long symTabIndex = symTab->insert( 0L, blkNum, SSLR_line );
+
+	/*
+		Der Datentyp bool wird intern als Byte dargestellt, der 0 oder 1
+		sein kann. Also ist false eine Zahl mit Zahlenwert 0.
+	*/
+	symTab->setType( symTabIndex, CSymbolTable::_NUMBER );
+
+	//Storage type eintragen
+	symTab->setStorageType( symTabIndex, CSymbolTable::_BOOL );
+
+
+	//ein LEAF erzeugen
+	$$ = syntaxTree->makeLeaf( symTabIndex, -1 );
+
+	//Zahlenwert eintragen
+	syntaxTree->setNumber( $$, 0 );
+
+	//den Datentyp ins Leaf eintragen
+	syntaxTree->setStorageType( $$, CSymbolTable::_BOOL );
+\}
+		|	'IDENT'
+\{
+	//der Identifier muss hier bereits deklariert sein
+	long index = symTab->find( $1 );
+
+	//Variable nicht deklariert?
+	if( index < 0 )
+	{
+		//nein, Fehler
+		cerr << "miniC: Line " << SSLR_line << ": " << $1 << " undeclared!" << endl;
+
+		//Zustand merken
+		$$ = -1;
+	}
+
+	else
+	{
+		CSymbolTable::storageType	type;
+
+		//ein Leaf erzeugen
+		$$ = syntaxTree->makeLeaf( index, -1 );
+
+		//den Datentyp der Vereinbarung holen
+		type = symTab->getStorageType( index );
+
+		//den Datentyp ins Leaf eintragen
+		syntaxTree->setStorageType( $$, type );
+
+		//Vereinbarung ist eine Variable
+		symTab->setType( index, CSymbolTable::_VAR );
+
+		/*
+			Wenn auf lokale Variablen ausserhalb des aktuellen Blocks zugegriffen wird,
+			dann muss man sich anhand der link-Befehle zum Stackframe "hangeln", in dem
+			die Vereinbarung getroffen wurde.
+		*/
+
+		//die Blocktiefe der Vereinbarung holen
+		int	localVarBlkNum = symTab->getBlkDepth( index );
+
+		//Differenz eintragen
+		syntaxTree->setBlkDiff( $$, blkNum - localVarBlkNum );
+	}
+\}
+		;
+
+
+%extensions
+\{
+
+void SSLRParser::init( void )
+{
+	//initialisieren
+
+	//Verschachtelungstiefe für globale Vereinbarungen setzen
+	blkNum = 0;
+
+	//Symboltabelle
+	symTab = 0L;
+
+	//Syntax-Baum
+	syntaxTree = 0L;
+
+	//für Variablen auf Laufzeit-Stack
+	varOffsetStack = 0L;
+	varOffsetStackPos = 0;
+	varOffsetStackMaxPos = 0;
+	localVariableOffsetCnt = 0;
+
+	//Array mit den zu korrigierenden Offsets für die lokalen Variablen
+	localVarStr.clear();
+}
+
+
+void SSLRParser::deinit( void )
+{
+	//deinitialisieren
+
+	//Speicher freigeben?
+	if( varOffsetStack )
+		delete[] ( varOffsetStack );
+}
+
+
+void SSLRParser::giveArgs( ARGV_STR *_argvStr, CSymbolTable *_symTab, CSyntaxTree *_syntaxTree, CCodeBase *_codeBase )
+{
+	//dem Parser einige Variablen übergeben
+
+	//Zeiger auf die Symboltabelle
+	symTab = _symTab;
+
+	//Zeiger auf den Syntaxbaum
+	syntaxTree = _syntaxTree;
+
+	//Zeiger auf die Codeerzeugung
+	codeBase = _codeBase;
+
+	//Command line arguments
+	argvStr = _argvStr;
+}
+
+
+void SSLRParser::popVarOffsetStack( void )
+{
+	//Offset für lokale Variablen vom Stack holen
+
+	//aktuelle Größe der lokalen Variablen des aktuellen Blocks zurückholen
+	localVariableOffsetCnt = localVarStr.back();
+
+	//letzen Eintrag popen
+	localVarStr.pop_back();
+}
+
+
+void SSLRParser::pushVarOffsetStack( void )
+{
+	//Offset für lokale Variablen merken
+
+	//auf Stack schieben
+	localVarStr.push_back( localVariableOffsetCnt );
+}
+
+
+void SSLRParser::adjustVarOffset( CSymbolTable::storageType type )
+{
+	//Offset für lokale Variablen anpassen
+	int	offset;
+
+	//welcher storage type?
+	switch( type )
+	{
+		case CSymbolTable::_CHAR:
+		case CSymbolTable::_BOOL:
+		{
+			//Bytes und Bools benötigen ein Byte
+			offset = _CHAR;
+			break;
+		}
+
+		case CSymbolTable::_SHORT:
+		{
+			//Shorts benötigen zwei Bytes
+			offset = _SHORT;
+			break;
+		}
+
+		case CSymbolTable::_INT:
+		{
+			//Integers benötigen vier Bytes
+			offset = _INT;
+			break;
+		}
+
+		case CSymbolTable::_LONG:
+		{
+			//Longs benötigen vier Bytes
+			offset = _LONG;
+			break;
+		}
+
+		default:
+		{
+			//Fehler
+			cerr << "SSLRParser::pushVarOffsetStack: Unknown storage type!" << endl;
+
+			//Ende
+			exit( 1 );
+		}
+	}
+
+	//anpassen
+	localVariableOffsetCnt += offset;
+}
+
+
+bool SSLRParser::cast( CSymbolTable::storageType lt, CSymbolTable::storageType rt, CSymbolTable::storageType &newType,
+int &which, CSyntaxTree::STOperator &op )
+{
+	/*
+		Wenn zwei Operanden inkompatibel sind, dann müssen sie durch einen cast kompatibel gemacht werden.
+		     lt: Typ des linken Operanden
+		     rt: Typ des rechten Operanden
+		newType: der gemeinsame Typ beider Operanden nach dem cast
+		  which: LEFT:  linker Operand muss gecastet werden
+				 RIGHT: rechter Operand muss gecastet werden
+		     op: Cast-Operator
+	*/
+
+	//Typen vergleichen
+	if( ( lt == CSymbolTable::_CHAR ) && ( rt == CSymbolTable::_CHAR ) )
+	{
+		//gemeinsamer Datentyp ist CHAR
+		newType = CSymbolTable::_CHAR;
+
+		//nicht casten
+		return( false );
+	}
+
+	if( ( lt == CSymbolTable::_BOOL ) && ( rt == CSymbolTable::_BOOL ) )
+	{
+		//gemeinsamer Datentyp ist BOOL
+		newType = CSymbolTable::_BOOL;
+
+		//nicht casten
+		return( false );
+	}
+
+	else if( ( lt == CSymbolTable::_INT ) && ( rt == CSymbolTable::_INT ) )
+	{
+		//gemeinsamer Datentyp ist INT
+		newType = CSymbolTable::_INT;
+
+		//nicht casten
+		return( false );
+	}
+
+	else if( ( lt == CSymbolTable::_LONG ) && ( rt == CSymbolTable::_LONG ) )
+	{
+		//gemeinsamer Datentyp ist LONG
+		newType = CSymbolTable::_LONG;
+
+		//nicht casten
+		return( false );
+	}
+
+	else if( ( lt == CSymbolTable::_SHORT ) && ( rt == CSymbolTable::_SHORT ) )
+	{
+		//gemeinsamer Datentyp ist SHORT
+		newType = CSymbolTable::_SHORT;
+
+		//nicht casten
+		return( false );
+	}
+
+
+
+
+	else if( ( lt == CSymbolTable::_BOOL ) && ( rt == CSymbolTable::_SHORT ) )
+	{
+		//BOOL in SHORT wandeln
+		op = CSyntaxTree::_BOOL2SHORT;
+
+		//gemeinsamer Datentyp ist SHORT
+		newType = CSymbolTable::_SHORT;
+
+		//den linken Operand casten
+		which = LEFT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_BOOL ) && ( rt == CSymbolTable::_CHAR ) )
+	{
+		//BOOL in CHAR wandeln
+		op = CSyntaxTree::_BOOL2CHAR;
+
+		//gemeinsamer Datentyp ist CHAR
+		newType = CSymbolTable::_CHAR;
+
+		//den linken Operand casten
+		which = LEFT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_BOOL ) && ( rt == CSymbolTable::_INT ) )
+	{
+		//BOOL in INT wandeln
+		op = CSyntaxTree::_BOOL2INT;
+
+		//gemeinsamer Datentyp ist INT
+		newType = CSymbolTable::_INT;
+
+		//den linken Operand casten
+		which = LEFT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_BOOL ) && ( rt == CSymbolTable::_LONG ) )
+	{
+		//BOOL in LONG wandeln
+		op = CSyntaxTree::_BOOL2LONG;
+
+		//gemeinsamer Datentyp ist LONG
+		newType = CSymbolTable::_LONG;
+
+		//den linken Operand casten
+		which = LEFT;
+
+		//casten
+		return( true );
+	}
+
+
+
+
+	else if( ( lt == CSymbolTable::_CHAR ) && ( rt == CSymbolTable::_BOOL ) )
+	{
+		//BOOL in CHAR wandeln
+		op = CSyntaxTree::_BOOL2CHAR;
+
+		//gemeinsamer Datentyp ist CHAR
+		newType = CSymbolTable::_CHAR;
+
+		//den rechten Operand casten
+		which = RIGHT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_CHAR ) && ( rt == CSymbolTable::_SHORT ) )
+	{
+		//CHAR in SHORT wandeln
+		op = CSyntaxTree::_CHAR2SHORT;
+
+		//gemeinsamer Datentyp ist SHORT
+		newType = CSymbolTable::_SHORT;
+
+		//den linken Operand casten
+		which = LEFT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_CHAR ) && ( rt == CSymbolTable::_INT ) )
+	{
+		//CHAR in INT wandeln
+		op = CSyntaxTree::_CHAR2INT;
+
+		//gemeinsamer Datentyp ist INT
+		newType = CSymbolTable::_INT;
+
+		//den linken Operand casten
+		which = LEFT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_CHAR ) && ( rt == CSymbolTable::_LONG ) )
+	{
+		//CHAR in LONG wandeln
+		op = CSyntaxTree::_CHAR2LONG;
+
+		//gemeinsamer Datentyp ist LONG
+		newType = CSymbolTable::_LONG;
+
+		//den linken Operand casten
+		which = LEFT;
+
+		//casten
+		return( true );
+	}
+
+
+
+	else if( ( lt == CSymbolTable::_SHORT ) && ( rt == CSymbolTable::_BOOL ) )
+	{
+		//BOOL in SHORT wandeln
+		op = CSyntaxTree::_BOOL2SHORT;
+
+		//gemeinsamer Datentyp ist SHORT
+		newType = CSymbolTable::_SHORT;
+
+		//den rechten Operand casten
+		which = RIGHT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_SHORT ) && ( rt == CSymbolTable::_CHAR ) )
+	{
+		//CHAR in SHORT wandeln
+		op = CSyntaxTree::_CHAR2SHORT;
+
+		//gemeinsamer Datentyp ist SHORT
+		newType = CSymbolTable::_SHORT;
+
+		//den rechten Operand casten
+		which = RIGHT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_SHORT ) && ( rt == CSymbolTable::_INT ) )
+	{
+		//SHORT in INT wandeln
+		op = CSyntaxTree::_SHORT2INT;
+
+		//gemeinsamer Datentyp ist INT
+		newType = CSymbolTable::_INT;
+
+		//den linken Operand casten
+		which = LEFT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_SHORT ) && ( rt == CSymbolTable::_LONG ) )
+	{
+		//SHORT in LONG wandeln
+		op = CSyntaxTree::_SHORT2LONG;
+
+		//gemeinsamer Datentyp ist LONG
+		newType = CSymbolTable::_LONG;
+
+		//den linken Operand casten
+		which = LEFT;
+
+		//casten
+		return( true );
+	}
+
+
+
+
+	else if( ( lt == CSymbolTable::_INT ) && ( rt == CSymbolTable::_BOOL ) )
+	{
+		//BOOL in INT wandeln
+		op = CSyntaxTree::_BOOL2INT;
+
+		//gemeinsamer Datentyp ist INT
+		newType = CSymbolTable::_INT;
+
+		//den rechten Operand casten
+		which = RIGHT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_INT ) && ( rt == CSymbolTable::_CHAR ) )
+	{
+		//CHAR in INT wandeln
+		op = CSyntaxTree::_CHAR2INT;
+
+		//gemeinsamer Datentyp ist INT
+		newType = CSymbolTable::_INT;
+
+		//den rechten Operand casten
+		which = RIGHT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_INT ) && ( rt == CSymbolTable::_SHORT ) )
+	{
+		//SHORT in INT wandeln
+		op = CSyntaxTree::_SHORT2INT;
+
+		//gemeinsamer Datentyp ist INT
+		newType = CSymbolTable::_INT;
+
+		//den rechten Operand casten
+		which = RIGHT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_INT ) && ( rt == CSymbolTable::_LONG ) )
+	{
+		//INT in LONG wandeln
+		op = CSyntaxTree::_INT2LONG;
+
+		//gemeinsamer Datentyp ist LONG
+		newType = CSymbolTable::_LONG;
+
+		//den linken Operand casten
+		which = LEFT;
+
+		//casten
+		return( true );
+	}
+
+
+
+	else if( ( lt == CSymbolTable::_LONG ) && ( rt == CSymbolTable::_BOOL ) )
+	{
+		//BOOL in LONG wandeln
+		op = CSyntaxTree::_BOOL2LONG;
+
+		//gemeinsamer Datentyp ist LONG
+		newType = CSymbolTable::_LONG;
+
+		//den rechten Operand casten
+		which = RIGHT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_LONG ) && ( rt == CSymbolTable::_CHAR ) )
+	{
+		//CHAR in LONG wandeln
+		op = CSyntaxTree::_CHAR2LONG;
+
+		//gemeinsamer Datentyp ist LONG
+		newType = CSymbolTable::_LONG;
+
+		//den rechten Operand casten
+		which = RIGHT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_LONG ) && ( rt == CSymbolTable::_SHORT ) )
+	{
+		//SHORT in LONG wandeln
+		op = CSyntaxTree::_SHORT2LONG;
+
+		//gemeinsamer Datentyp ist LONG
+		newType = CSymbolTable::_LONG;
+
+		//den rechten Operand casten
+		which = RIGHT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_LONG ) && ( rt == CSymbolTable::_INT ) )
+	{
+		//INT in LONG wandeln
+		op = CSyntaxTree::_INT2LONG;
+
+		//gemeinsamer Datentyp ist LONG
+		newType = CSymbolTable::_LONG;
+
+		//den rechten Operand casten
+		which = RIGHT;
+
+		//casten
+		return( true );
+	}
+
+	else
+		//Warnung ausgeben
+		cerr << "SSLRParser::cast: Nothing to cast!" << endl;
+
+	//nicht casten
+	return( false );
+}
+
+
+bool SSLRParser::forceCast( CSymbolTable::storageType lt, CSymbolTable::storageType rt, CSyntaxTree::STOperator &op )
+{
+	/*
+		Bei einer Zuweisung
+		a = b;
+
+		muss die rechte Seite auf den Typ von a gecastet werden, auch, wenn dann Informationen
+		verloren gehen.
+		lt: Typ des linken Operanden
+		rt: Typ des rechten Operanden
+		op: Cast-Operator
+	*/
+
+	//Typen vergleichen
+	if( ( lt == CSymbolTable::_CHAR ) && ( rt == CSymbolTable::_CHAR ) )
+		//nicht casten
+		return( false );
+
+	if( ( lt == CSymbolTable::_BOOL ) && ( rt == CSymbolTable::_BOOL ) )
+		//nicht casten
+		return( false );
+
+	else if( ( lt == CSymbolTable::_INT ) && ( rt == CSymbolTable::_INT ) )
+		//nicht casten
+		return( false );
+
+	else if( ( lt == CSymbolTable::_LONG ) && ( rt == CSymbolTable::_LONG ) )
+		//nicht casten
+		return( false );
+
+	else if( ( lt == CSymbolTable::_SHORT ) && ( rt == CSymbolTable::_SHORT ) )
+		//nicht casten
+		return( false );
+
+
+
+
+
+
+	else if( ( lt == CSymbolTable::_BOOL ) && ( rt == CSymbolTable::_CHAR ) )
+	{
+		//CHAR in BOOL wandeln
+		op = CSyntaxTree::_CHAR2BOOL;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_BOOL ) && ( rt == CSymbolTable::_SHORT ) )
+	{
+		//SHORT in BOOL wandeln
+		op = CSyntaxTree::_SHORT2BOOL;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_BOOL ) && ( rt == CSymbolTable::_INT ) )
+	{
+		//INT in BOOL wandeln
+		op = CSyntaxTree::_INT2BOOL;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_BOOL ) && ( rt == CSymbolTable::_LONG ) )
+	{
+		//LONG in BOOL wandeln
+		op = CSyntaxTree::_LONG2BOOL;
+
+		//casten
+		return( true );
+	}
+
+
+
+
+	else if( ( lt == CSymbolTable::_CHAR ) && ( rt == CSymbolTable::_BOOL ) )
+	{
+		//BOOL in CHAR wandeln
+		op = CSyntaxTree::_BOOL2CHAR;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_CHAR ) && ( rt == CSymbolTable::_SHORT ) )
+	{
+		//SHORT in CHAR wandeln
+		op = CSyntaxTree::_SHORT2CHAR;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_CHAR ) && ( rt == CSymbolTable::_INT ) )
+	{
+		//INT in CHAR wandeln
+		op = CSyntaxTree::_INT2CHAR;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_CHAR ) && ( rt == CSymbolTable::_LONG ) )
+	{
+		//LONG in CHAR wandeln
+		op = CSyntaxTree::_LONG2CHAR;
+
+		//casten
+		return( true );
+	}
+
+
+
+	else if( ( lt == CSymbolTable::_SHORT ) && ( rt == CSymbolTable::_BOOL ) )
+	{
+		//BOOL in SHORT wandeln
+		op = CSyntaxTree::_BOOL2SHORT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_SHORT ) && ( rt == CSymbolTable::_CHAR ) )
+	{
+		//CHAR in SHORT wandeln
+		op = CSyntaxTree::_CHAR2SHORT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_SHORT ) && ( rt == CSymbolTable::_INT ) )
+	{
+		//INT in SHORT wandeln
+		op = CSyntaxTree::_INT2SHORT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_SHORT ) && ( rt == CSymbolTable::_LONG ) )
+	{
+		//LONG in SHORT wandeln
+		op = CSyntaxTree::_LONG2SHORT;
+
+		//casten
+		return( true );
+	}
+
+
+
+
+	else if( ( lt == CSymbolTable::_INT ) && ( rt == CSymbolTable::_BOOL ) )
+	{
+		//BOOL in INT wandeln
+		op = CSyntaxTree::_BOOL2INT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_INT ) && ( rt == CSymbolTable::_CHAR ) )
+	{
+		//CHAR in INT wandeln
+		op = CSyntaxTree::_CHAR2INT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_INT ) && ( rt == CSymbolTable::_SHORT ) )
+	{
+		//SHORT in INT wandeln
+		op = CSyntaxTree::_SHORT2INT;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_INT ) && ( rt == CSymbolTable::_LONG ) )
+	{
+		//LONG in INT wandeln
+		op = CSyntaxTree::_LONG2INT;
+
+		//casten
+		return( true );
+	}
+
+
+
+	else if( ( lt == CSymbolTable::_LONG ) && ( rt == CSymbolTable::_BOOL ) )
+	{
+		//BOOL in LONG wandeln
+		op = CSyntaxTree::_BOOL2LONG;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_LONG ) && ( rt == CSymbolTable::_CHAR ) )
+	{
+		//CHAR in LONG wandeln
+		op = CSyntaxTree::_CHAR2LONG;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_LONG ) && ( rt == CSymbolTable::_SHORT ) )
+	{
+		//SHORT in LONG wandeln
+		op = CSyntaxTree::_SHORT2LONG;
+
+		//casten
+		return( true );
+	}
+
+	else if( ( lt == CSymbolTable::_LONG ) && ( rt == CSymbolTable::_INT ) )
+	{
+		//INT in LONG wandeln
+		op = CSyntaxTree::_INT2LONG;
+
+		//casten
+		return( true );
+	}
+
+	else
+		//Warnung ausgeben
+		cerr << "SSLRParser::forceCast: Nothing to cast!" << endl;
+
+	//nicht casten
+	return( false );
+}
+
+
+\}
+

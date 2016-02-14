@@ -1,0 +1,43 @@
+;Konfigurations-Datei zum LR-Parser-Generator
+
+;Ausgabe in Datei
+;FILE
+;SCREEN
+;PRINTER
+DEST			=	FILE
+
+;Analyse der Grammatik ausgeben
+ANALYZE			=	OFF
+
+;LR-Items ausgeben
+SHOW_ITEMS		=	ON
+
+;LR-Tabelle komprimieren
+COMPRESS		=	ON
+
+;LR-Tabelle ausgeben
+LR_TAB			=	OFF
+
+;Parsertyp
+;LR
+;LALR
+;SLR
+TYPE			=	SLR
+
+;DEBUG-Version des Parsers erzeugen
+DEBUG			=	ON
+
+;Grammatik in BNF ausgeben
+OUTPUT_GRAMMAR	=	OFF
+
+;FOLLOW-Mengen ausgeben
+FOLLOW			=	OFF
+
+;FIRST-Mengen ausgeben
+FIRST			=	OFF
+
+;Gr”že der Grammatik-Hash-Tabelle
+HASH_TAB_SIZE	=	2000
+
+;Max. Anzahl der Zeichen pro Zeile
+MAX_CHAR		=	60

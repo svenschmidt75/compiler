@@ -1,0 +1,139 @@
+/*
+	Rahmenroutine zur Behandlung desd Lookahead-Operators.
+	12.08.1997
+	Sven Schmidt
+	PureC 1.1
+*/
+
+
+
+/* Hier steht der Text */
+BYTE	*grammar;
+
+/* Hilfs-Variable */
+BYTE	*temp_grammar;
+
+/* Hier steht der erkannte String des regul„ren Ausdrucks */
+BYTE	*sslex_text;
+
+/* Hilfsvariable */
+BYTE	*temp_sslex_text;
+
+/* Hier steht der zurckzuliefernde Wert */
+WORD	return_re;
+
+
+
+/********************************************************************************************/
+/* Regul„rer Ausdruck: {number} / {string}                                                  */
+/* Es ist der regul„re Azsdruck number, wenn das folgende der regul„re Ausdruck string ist. */
+/********************************************************************************************/
+
+
+
+switch( ( WORD ) sslex_state )
+{
+	case 2:
+	{
+		/*
+			Der regul„re Ausdruck number wurde erkannt.
+			Es handelt sich bei Zustand 2 um einen Zwischenzustand, damit die diversen Werte gesichert werden k”nnen */
+		*/
+
+		/* Diese Werte mssen nach Erkennen des Lookahead-REs wieder hergestellt werden */
+		temp_grammar = grammar;
+		temp_sslex_text = sslex_text;
+
+		/* Zurckzuliefernder Wert */
+		return_lookahead = NUMBER;
+
+		/* Weiter analysieren */
+		break;
+	}
+
+	case 4:
+	{
+		/* Hier wurde ein String erkannt */
+		return_state = STRING;
+		break;
+	}
+}
+
+if( temp_grammar )
+{
+	/* Es wurde ein Lookahead-Operator genutzt */
+	grammar = temp_grammar;
+	sslex_text = temp_sslex_text;
+	return_re = return_lookahead;
+
+	/* Zurcksetzen */
+	temp_grammar = 0L;
+}
+
+return( return_re );
+
+
+***************************************************************************************************************************
+
+oder
+( hierbei mssen die Variablen save_grammar, save_text und return_re vom Typ static sein ! )
+
+***************************************************************************************************************************
+
+
+if( save_grammar )
+{
+	/* Es wurde ein Lookahead-Operator genutzt */
+	grammar = save_grammar;
+	sslex_text = save_text;
+
+	/* Zurcksetzen */
+	save_grammar = 0L;
+	return( return_re );
+}
+
+else
+
+
+switch( ( WORD ) sslex_state )
+{
+	case 2:
+	{
+		/*
+			Der regul„re Ausdruck number wurde erkannt.
+			Es handelt sich bei Zustand 2 um einen Zwischenzustand, damit die diversen Werte gesichert werden k”nnen */
+		*/
+
+		/* Diese Werte mssen nach Erkennen des Lookahead-REs wieder hergestellt werden */
+		temp_grammar = grammar;
+		temp_sslex_text = sslex_text;
+
+		/* Zurckzuliefernder Wert */
+		return_lookahead = NUMBER;
+
+		/* Weiter analysieren */
+		break;
+	}
+
+	case 4:
+	{
+		/* Hier wurde ein String erkannt */
+		return_state = STRING;
+		break;
+	}
+}
+
+if( temp_grammar )
+{
+	/* Es wurde ein Lookahead-Operator genutzt */
+
+	/* Position merken */
+	save_grammar = grammar;
+	save_text = sslex_text;
+
+	/* Den erkannten Lookahead-RE l”schen */
+	grammar = temp_grammar;
+	sslex_text = temp_sslex_text;
+}
+
+return( return_lookahead > 0 ? return_lookahead : return_re );

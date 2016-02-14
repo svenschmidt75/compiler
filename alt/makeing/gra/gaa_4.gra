@@ -1,0 +1,13 @@
+/*
+	Grammatik aus dem Drachen S. 302
+	Reduce/Reduce-Fehler
+*/
+
+%grammar
+
+expr	:	expr 'SUB' expr
+		|	expr 'SUP' expr
+		|	expr 'SUB' expr 'SUP' expr
+		|	'{' expr '}'
+		|	'IDENT'
+		;

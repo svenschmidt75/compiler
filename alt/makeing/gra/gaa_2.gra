@@ -1,0 +1,28 @@
+%grammar
+
+expr	:	term a1
+		;
+
+a1		:	restexpr a1
+		|
+		;
+
+term	:	factor a2
+		;
+
+a2		:	restterm a2
+		|
+		;
+
+factor	:	'KLOPEN' expr 'KLCLOSE'
+		|	'ZAHL'
+		;
+
+restexpr:	'ADD' term
+		|	'SUB' term
+		;
+
+restterm:	'MUL' factor
+		|	'DIV' factor
+		;
+

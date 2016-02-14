@@ -1,0 +1,185 @@
+/*
+	Scanner-Spezifikation für das Projekt miniC, meinem ersten Compiler für eine
+	kleine Sprache.
+	(c) 2005 by Sven Schmidt
+	s.schmidt@lboro.ac.uk
+
+	Last modified: 30.03.2005
+*/
+
+
+%include
+\{
+	//initialize user defined variables
+	#define SSLEX_INIT
+
+\}
+
+
+
+%definition
+
+%x SC_COMMENT
+
+
+WS			[[:blank:]]+
+OPTWS		[[:blank:]]*
+NOT_WS		[^[:blank:]\n]
+
+NL			\r?\n
+
+NAME		([[:alpha:]_][[:alnum:]_-]*)
+NOT_NAME	[^[:alpha:]_*\n]+
+
+FLOAT		([[:digit:]])+(\.([[:digit:]])+)?(E[+\-]?([[:digit:]])+)?
+
+ESCSEQ		(\\([^\n]|[0-7]{1,3}|x[[:xdigit:]]{1,2}))
+
+
+
+	private:
+
+	//werden unverändert ins Header-File des erzeugten Scanners übernommen
+
+	//Kommantar scannen
+	bool		cComment;
+
+
+
+
+
+
+	//Methoden
+
+	//eigene Variablen initialisieren
+	void init( void );
+
+	//eigene Variablen deinitialisieren
+	void deinit( void );
+
+
+	public:
+
+
+
+
+%specification
+
+<INITIAL>{
+
+	^"//".*			/* C++-Kommentar */
+
+	^"/*"			{
+						//scanne einen C-Kommentar
+						cComment = true;
+						yyPushState( SC_COMMENT );
+					}
+
+	"int"			/* integer */ return( INT );
+	"bool"			/* bool-Typ */ return( BOOL );
+	"char"			/* char-Typ */ return( CHAR );
+	"long"			/* long-Typ */ return( LONG );
+	"short"			/* short-Typ */ return( SHORT );
+
+	"if"			/* if-Statement */ return( IF_STMT );
+	"else"			/* else-Teil */ return( ELSE_STMT );
+	"while"			/* while-Schleife */ return( WHILE );
+	"do"			/* do-while-Schleife */ return( DO );
+
+	"true"			/* Boolsches true */ return( TRUE );
+	"false"			/* Boolsches false */ return( FALSE );
+
+	","				/* Komma */ return( COMMA );
+	";"				/* Abschluss einer expression */ return( SEMIKOLON );
+
+	{NAME}			{
+						/* Bezeichner */
+						attributeStr->_name = yyStrCpy( yyText );
+						return( IDENT );
+					}
+
+	"="				/* Zuweisung */ return( EQU );
+
+	"{"				/* ein neuer Block wird bekonnen */ return( BOPEN );
+	"}"				/* ein Block wird beendet */ return( BCLOSE );
+
+	"<"				/* kleiner */ return( LESS );
+	">"				/* größer */ return( GREATER );
+	"<="			/* kleiner gleich */ return( LESS_EQU );
+	">="			/* größer gleich */ return( GREATER_EQU );
+	"=="			/* gleich */ return( EQUAL );
+	"!="			/* ungleich */ return( NOTEQUAL );
+	"&&"			/* logisches und */ return( LOG_AND );
+	"||"			/* logisches oder */ return( LOG_OR );
+	"!"				/* logisches not */ return( LOG_NOT );
+	"&"				/* binäres und */ return( BIN_AND );
+	"|"				/* binäres oder */ return( BIN_OR );
+	"^"				/* binäres xor */ return( BIN_XOR );
+	"~"				/* binäres not */ return( BIN_NOT );
+
+	"<<"			/* links shift */ return( LEFT_SHIFT );
+	">>"			/* rechts shift */ return( RIGHT_SHIFT );
+
+	"+"				/* Addition */ return( ADD );
+	"-"				/* Subtraktion */ return( SUB );
+	"*"				/* Multiplikation */ return( MUL );
+	"/"				/* Division */ return( DIV );
+	"%"				/* Modulo */ return( MOD );
+
+	"("				/* Assoziativität */ return( KLOPEN );
+	")"				/* Assoziativität */ return( KLCLOSE );
+
+	([[:digit:]])+	{
+						//eine Zahl zurückliefern
+						attributeStr->_integer = atoi( yyText );
+
+						//Zahl
+						return( NUMBER );
+					}
+
+	{FLOAT}			{
+						/* Fließpunktzahl */
+					}
+
+	^{OPTWS}{NL}	/* allows blank lines in section 1 */
+
+	{WS}			/* Leerzeichen */
+
+	{NL}			/* neue Zeile */
+}
+
+
+<SC_COMMENT>{
+	"*/"	{
+				//sind wir noch in der Analyse eines C-Kommentars?
+				if( cComment == true )
+					//ja, die oberste SC entfernen
+					yyPopState();
+			}
+
+	"*"			;
+	[^*\n]+		;
+	[^*\n]*{NL}	;
+}
+
+
+
+%extension
+\{
+	//eigene Erweiterungen und Hilfsroutinen
+
+void SSLEXScanner::init( void )
+{
+	//initialize user defined variables
+}
+
+
+void SSLEXScanner::deinit( void )
+{
+	//deinitialize user defined variables
+}
+
+
+
+\}
+

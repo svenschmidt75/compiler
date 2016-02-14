@@ -1,0 +1,68 @@
+Das Erzeugen von SSLR unter Verwendung von SSLR und SSLEX
+---------------------------------------------------------
+
+Last modified: 03.02.2005
+
+
+
+1.
+	Erzeuge die Parse-Files durch Aufruf von
+
+	sslr sslr.sslr
+
+	Den erzeugten Dateien sslrparser.cpp und sslrparser.h wird zuerst ein Unterstrich
+	vorangestellt, also aus sslrparser.cpp wird _sslrparser.cpp. Dann werden die
+	Dateien _sslrparser.cpp, sslrparser.h sowie sslrtermdef.h in das Source-Verzeichnis
+	von SSLR kopiert, src.
+
+2.
+	In _sslrparser.h müssen Dateien inkludiert werden
+
+
+	#include <fstream>
+	#include <sys/stat.h>
+
+	#include "sslexscanner.h"
+	#include "terminal.h"
+	#include "hashclass.h"
+
+3.
+	In _sslrparser.cpp muss die Anweisung #include "sslrparser.h"
+	in #include "_sslrparser.h" geändert werden.
+
+4.
+	Der Scanner wird durch Aufruf von
+
+	sslex sslr.sslex erzeugt. Die erzeugten Files, sslexscanner.h und sslexscanner.cpp, werden
+	in das Source-Verzeichnis von SSLR kopiert.
+
+5.
+	In der Klasse SSLRParser des Files _sslrparser.cpp gibt es eine Methode
+	void SSLRParser::SSLR_doSemAct( SSLR_LR_TAB *tab ).
+	Fast am Ende dieser gibt es ein Code-Fragment
+
+		default:
+			//error
+			cerr << "SSLRParser::SSLR_doSemAct: Unknown alternative " << tab->value << "!" << endl;
+
+	Beide Angaben, das default und das cerr, bitte auskommentieren.
+
+6.
+	In der Klasse SSLEXScanner des Files sslexscanner.cpp gibt es eine Methode
+	int SSLEXScanner::yyLex( SSLR_TYPE *attributeStr ).
+	Das cerr in
+
+		//when we use a 7 bit scanner
+		if( c > 127 )
+		{
+			//we need a 8 bit scanner
+			cerr << "SSLEXScanner::yyLex: Line " << yyLineno << ": You need a 8 bit scanner to match the character " << c << "!\n";
+
+			//skip character
+			pos++;
+			continue;
+		}
+
+	auskommentieren.
+
+

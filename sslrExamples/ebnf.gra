@@ -1,0 +1,88 @@
+/*
+	EBNF in EBNF selbst.
+	aus "Compiler bauen mit Unix", Hanser Verlag
+*/
+
+%grammar
+/*
+grammar
+	:	grammar rule
+	|	rule
+	;
+
+rule
+	:	rule 'OR' formulation
+	|	'NTERM' 'SEPERATOR' formulation
+	|	'NTERM' 'SEPERATOR' 'EPS'
+	;
+
+formulation
+	:	formulation symbol
+	|	symbol
+	;
+
+symbol
+	:	'NTERM'
+	|	'TERM'
+	|	'BOPEN' formulation 'BCLOSE'
+	|	'KOPEN' formulation 'KCLOSE'
+	|	'KLOPEN' formulation 'KLCLOSE'
+	;
+
+
+	This is the mofified version to handle it in SSLR.
+*/
+main
+	:	init sect1 'GRAMMAR' grammar
+	;
+
+init
+	:	'EPSILON'	//initialize SSLR
+	;
+
+sect1
+	:	'SECT1' 'UNION' union
+		'SECT1'
+	;
+
+union
+	:	union 'NAME' 'AST' 'NAME' 'COMMA'	//type *name;
+	|	union 'NAME' 'NAME' 'COMMA'			//type name;
+	|	'NAME' 'NAME' 'COMMA'
+	;
+
+grammar
+	:	grammar initrule rule
+	|	initrule rule
+	;
+
+initrule
+	:	'EPSILON'							//new PROD_STR
+	;
+
+rule
+	:	rule 'OR' formulation
+	|	'NTERM' 'SEPERATOR' formulation
+	|	'NTERM' 'SEPERATOR' 'EPS'			//epsilon-production
+	;
+
+formulation
+	:	formulation symbol
+	|	symbol
+	;
+
+symbol
+	:	'NTERM'
+	|	'TERM'
+	|	'BOPEN' ebnf formulation 'BCLOSE'
+	|	'KOPEN' ebnf formulation 'KCLOSE'
+	|	'KLOPEN' ebnf formulation 'KLCLOSE'
+	;
+
+ebnf
+	:	'EPSILON'							//insert auxsym in right side of current PROD2_STR, then get new PROD2_STR
+	;
+
+
+
+

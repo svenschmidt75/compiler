@@ -1,0 +1,281 @@
+SSASS V0.1a
+(c) 2005 by Sven Schmidt
+s.schmidt@lboro.ac.uk
+
+MC68000 Assembler
+--------------------------
+
+
+Last modified: 10.04.2005
+
+
+
+
+TODO
+----
+
+- die Extension .b,.w,.l,.s,.d muss mit codiert werden
+- COne, CTwo haben Methoden getSDispOffset, getDDispOffset, um die Adresse, an der ein Label
+korrigiert werden muss, abgespeichert werden kann, nicht der ganze Befehl
+- DATA- und BSS-Segment noch scannen
+
+
+
+
+
+
+Register
+--------
+
+- beliebig viele Datenregister dx
+- beliebig viele Adressregister ax
+- beliebig viele FPU-Register fpx
+- Status-Register SR
+- CCR
+- PC
+- Floating Point Status-Register FPSR
+
+
+
+Befehlssatz
+-----------
+
+add
+addx ?
+and
+asl ?
+asr ?
+
+	bcc
+		bra
+		bhi
+		bls
+		bcc
+		bcs
+		bne
+		beq
+		bvc
+		bvs
+		bpl
+		bmi
+		bge
+		blt
+		bgt
+		ble
+bsr
+clr
+cmp
+dbcc
+divs
+divu
+eor
+ext
+extb.l
+jmp
+jsr
+lea
+link
+lsl
+lsr
+move
+movem
+muls
+mulu
+neg
+negx ?
+nop
+not
+or
+pea
+rol ?
+ror ?
+roxl ?
+roxr ?
+rts
+scc (für bool-Datentyp!)
+sub
+subx ?
+tst
+unlk
+
+
+Floating Point Support
+----------------------
+
+fabs
+facos
+fadd
+fasin
+fatan
+fatanh
+fbcc
+fcmp
+fcos
+fcosh
+fdbcc
+fdiv
+fetox
+fgetexp
+fgetman
+fint
+flog10
+flog2
+flogn
+fmod
+fmove
+fmovecr
+fmovem
+fmul
+fneg
+fnop
+frem
+fscale ?
+fscc
+fsin
+fsinh
+fsqrt
+fsub
+ftan
+ftanh
+ftentox
+ftst
+ftwotox
+
+
+
+
+Aufbau der Opcodes
+------------------
+
+
+ 0..15: Nummer des Befehls
+16..23: Breite
+	.b: Byte     ( 8 Bit)
+	.w: Word     (16 Bit)
+	.l:	Long     (32 Bit)
+	.s: Single   (32 Bit)
+	.d:	Double   (64 Bit)
+	.x:	Extended (96 Bit)
+16..23: Adressierungsart Quelle
+24..31: Adressierungsart Ziel
+
+move.l	d0,d1
+
+struct OpCode
+{
+	short	_opcode;
+	short	_sAdrMode;
+
+};
+
+
+----------------------
+| Adressierungsarten |
+----------------------
+
+Data Register Direct
+--------------------
+
+Mode: 0
+
+
+
+
+
+
+
+
+Aufbau eines Assembler-Files
+----------------------------
+
+Der Stack muss entsprechend gesetzt werden.
+Dies geschieht, indem man dem Assembler die Stack-Größe mittels
+
+	.stack	1024
+
+mitteilt. In diesem Falle wird am Ende des Objektfiles ein Stack von 1024 Bytes
+bereitsgestellt und am Anfang mittels
+
+lea.l stack+1024,sp
+
+initialisiert.
+
+Mit .text wird der Assembler-Code-Bereich begonnen. Statische Daten werden mit .data
+begonnen, mit .bss der Rest.
+
+Symbole können mittels .extern exportiert werden, wenn also mehrere Assembler-Files
+zu einem Programm gelinkt werden sollen, so existiert i.A. nur eine main-Routine. Dies
+kann man dem Assembler mittels .extern main mitteilen.
+
+Ein typisches Programm in miniC:
+
+
+int		a, b, c, d;
+char	xy;
+
+{
+	int		a, b, c, d;
+	char	xy;
+	long 	q;
+
+	{
+		long	a, p;
+		int		d, e;
+
+		{
+			char	x, y;
+
+			xy*a;
+			a = xy * e;
+		}
+
+		long	w, z;
+	}
+
+	long	p, z;
+}
+
+
+wird so dargestellt
+
+
+	.stack	1024
+
+	.text
+
+	link.l	a6,#-30		;Speicher für lokale Variablen, a, b, c, d, xy, q, p, z
+	link.l	a6,#-24		;Speicher für lokale Variablen, a, p, d, e, w, z
+	link.l	a6,#-4		;Speicher für lokale Variablen, x, y
+
+	move.l	(a6),a0
+	move.l	(a0),a0
+	move.b	-16(a0),d0	;xy
+	ext.l	d0
+	move.l	(a6),a0
+	move.l	-0(a0),d1	;a
+	mul.l	d0,d1
+
+	move.l	(a6),a0
+	move.l	(a0),a0
+	move.b	-16(a0),d0	;xy
+	ext.l	d0
+	move.l	(a6),a0
+	move.l	-12(a0),d1	;e
+	mul.l	d0,d1
+	move.l	(a6),a0
+	move.l	d1,-0(a0)	;a
+
+	unlk.l	a6
+	unlk.l	a6
+	unlk.l	a6
+
+	.data
+
+a:	.dc.l	1
+b:	.dc.l	1
+c:	.dc.l	1
+d:	.dc.l	1
+xy:	.dc.w	1
+
+stack:
+	.dc.b	1024

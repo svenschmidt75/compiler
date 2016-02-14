@@ -1,0 +1,18 @@
+0.3alpha - 0.4alpha
+
+	- corrected a whole bunch of typos in the manual
+
+0.2alpha - 0.3alpha
+
+	- several bugfixes
+	- implemented embedded semantic actions
+	- fixed handling of EBNF-symbol {}
+	- minor improvements of the error recover routines
+	- fixed problems with priority of productions
+	- implemented %nonassoc
+
+
+0.1alpha - 0.2alpha
+
+	- valgrinded sslr
+	- several bugfixes

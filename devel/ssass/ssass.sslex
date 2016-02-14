@@ -1,0 +1,294 @@
+/*
+	Scanner-Spezifikation für das Projekt SSASS, einem Assembler, der den
+	Assembler-Code von miniC in Objektcode umwandelt.
+	(c) 2005 by Sven Schmidt
+	s.schmidt@lboro.ac.uk
+
+	Last modified: 17.04.2005
+*/
+
+
+%include
+\{
+	//initialize user defined variables
+	#define SSLEX_INIT
+\}
+
+
+
+%definition
+
+%x SC_COMMENT
+
+
+WS			[[:blank:]]+
+OPTWS		[[:blank:]]*
+NOT_WS		[^[:blank:]\n]
+
+NL			\r?\n
+
+NAME		"."?([[:alpha:]_][[:alnum:]_-]*)
+NOT_NAME	[^[:alpha:]_*\n]+
+
+LABEL_DEF	{NAME}":"
+
+NUMBER		("+"|"-")?([[:digit:]])+
+HEXNUMBER	"0x"([[:xdigit:]])+
+
+
+	private:
+
+	//werden unverändert ins Header-File des erzeugten Scanners übernommen
+
+	//Kommantar scannen
+	bool		cComment;
+
+
+
+
+
+
+	//Methoden
+
+	//eigene Variablen initialisieren
+	void init( void );
+
+	//eigene Variablen deinitialisieren
+	void deinit( void );
+
+
+	public:
+
+
+
+
+%specification
+
+<INITIAL>{
+
+	^"//".*			/* C++-Kommentar */
+
+	^"/*"			{
+						//scanne einen C-Kommentar
+						cComment = true;
+						yyPushState( SC_COMMENT );
+					}
+
+	^{OPTWS}{NL}	/* allows blank lines in section 1 */
+
+	{WS}			/* Leerzeichen */
+
+	".stack"		/* die Größe des Laufzeit-Stacks festlegen */ return( STACK );
+	".import"		/* eine Vereinbarung importieren */ return( IMPORT );
+	".export"		/* eine Vereinbarung global machen */ return( EXPORT );
+	".local"		/* eine Vereinbarung als lokales Element deklarieren */ return( LOCAL );
+	".text"			/* TEXT-Segment */ return( TEXT_SEG );
+	".data"			/* DATA-Segment */ return( DATA_SEG );
+	//".bss"			/* BSS-Segment */ return( BSS_SEG );
+	".string"		/* String */ return( STRING_CODE );
+
+	^{LABEL_DEF}	{
+						//das : am Ende löschen
+						yyText[strlen(yyText) - 1] = 0;
+
+						//es wurde ein Label erkannt
+						attributeStr->_name = yyStrCpy( yyText );
+
+						//Bezeichner */
+						return( LABEL_DEF );
+					}
+
+	".b"			return( BYTE );
+	".w"			return( WORD );
+	".l"			return( LONG );
+	".s"			return( SINGLE );
+	".d"			return( DOUBLE );
+
+	".dc"			/* DATA-Segment */ return( DC );
+
+	\".*\"			{
+						//String erkannt
+						attributeStr->_name = yyStrCpy( yyText );
+
+						//String
+						return( STRING );
+					}
+
+	"d"{NUMBER}+	{
+						/* Datenregister, z.B. d34 */
+						attributeStr->_integer = atoi( &yyText[1] );
+
+						//Datenregister */
+						return( DATA_REG );
+					}
+
+	"a"{NUMBER}+	{
+						/* Adressregister, z.B. a34 */
+						attributeStr->_integer = atoi( &yyText[1] );
+
+						/* Adressregister */
+						return( ADRESS_REG );
+					}
+
+	"sp"			{
+						/* Stack Pointer, ist IMMER a7 */
+						attributeStr->_integer = 7;
+
+						/* Adressregister */
+						return( ADRESS_REG );
+					}
+
+	"("				return( KLOPEN );
+	")"				return( KLCLOSE );
+	"+"				return( PLUS );
+	"-"				return( MINUS );
+
+	"sr"			/* Status Register */ return( SR );
+	"pc"			/* Programm Counter */ return( PC );
+	"#"				/* Zahl oder Adresse */ return( SHARP );
+
+	{NUMBER}		{
+						/* z.B. .dc.b 10 */
+						char	*tail;
+
+						//String in Zahl wandeln
+						attributeStr->_number = strtoul( yyText, &tail, 10 );
+
+						//Zahl
+						return( NUMBER );
+					}
+
+	{HEXNUMBER}		{
+						//eine hexadezimale Zahl erkannt
+						char	*tail;
+
+						//String in Zahl wandeln
+						attributeStr->_number = strtoul( yyText, &tail, 16 );
+
+						//Zahl
+						return( NUMBER );
+					}
+
+	"move"			return( MOVE );
+
+	"add"			return( ADD );
+	"addx"			return( ADDX );
+	"sub"			return( SUB );
+	"subx"			return( SUBX );
+	"mulu"			return( MULU );
+	"muls"			return( MULS );
+	"divu"			return( DIVU );
+	"divs"			return( DIVS );
+
+	"and"			return( AND );
+	"or"			return( OR );
+	"eor"			return( XOR );
+	"neg"			return( NEG );
+	"negx"			return( NEGX );
+	"not"			return( NOT );
+
+	"lsl"			return( LSL );
+	"lsr"			return( LSR );
+	"asl"			return( ASL );
+	"asr"			return( ASR );
+
+	//Sprungbefehle
+	"bra"			return( BRA );
+	"beq"			return( BEQ );
+	"bne"			return( BNE );
+	"blt"			return( BLT );
+	"ble"			return( BLE );
+	"bgt"			return( BGT );
+	"bge"			return( BGE );
+	"bpl"			return( BPL );
+	"bmi"			return( BMI );
+	"bsr"			return( BSR );
+	"bhi"			return( BHI );
+	"bls"			return( BLS );
+	"bcc"			return( BCC );
+	"bcs"			return( BCS );
+	"bvc"			return( BVC );
+	"bvs"			return( BVS );
+
+	"clr"			return( CLR );
+	"cmp"			return( CMP );
+	"ext"			return( EXT );
+	"extb"			return( EXTB );
+	"jmp"			return( JMP );
+	"jsr"			return( JSR );
+	"lea"			return( LEA );
+	"pea"			return( PEA );
+	"link"			return( LINK );
+	"unlk"			return( UNLK );
+	"nop"			return( NOP );
+	"rts"			return( RTS );
+	"tst"			return( TST );
+
+	"sst"			return( SST );
+	"ssf"			return( SSF );
+	"seq"			return( SEQ );
+	"sne"			return( SNE );
+	"slt"			return( SLT );
+	"sle"			return( SLE );
+	"sgt"			return( SGT );
+	"sge"			return( SGE );
+	"spl"			return( SPL );
+	"smi"			return( SMI );
+	"shi"			return( SHI );
+	"sls"			return( SLS );
+	"scc"			return( SCC );
+	"scs"			return( SCS );
+	"svc"			return( SVC );
+	"svs"			return( SVS );
+
+	{NAME}			{
+						/* Adressname */
+						attributeStr->_name = yyStrCpy( yyText );
+
+						//Bezeichner */
+						return( NAME );
+					}
+
+	","				return( COMMA );
+
+	{NL}			;
+
+	//Kommentare
+	";".*			;
+}
+
+
+<SC_COMMENT>{
+	"*/"	{
+				//sind wir noch in der Analyse eines C-Kommentars?
+				if( cComment == true )
+					//ja, die oberste SC entfernen
+					yyPopState();
+			}
+
+	"*"			;
+	[^*\n]+		;
+	[^*\n]*{NL}	;
+}
+
+
+
+%extension
+\{
+	//eigene Erweiterungen und Hilfsroutinen
+
+void SSLEXScanner::init( void )
+{
+	//initialize user defined variables
+}
+
+
+void SSLEXScanner::deinit( void )
+{
+	//deinitialize user defined variables
+}
+
+
+
+\}
+

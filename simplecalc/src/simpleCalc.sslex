@@ -1,0 +1,40 @@
+/*
+	Scanner-Spezifikation für das Projekt simpleCalc für den Scanner-Generator SSLEX.
+	(c) 2003-2005 by Sven Schmidt
+	s.schmidt@lboro.ac.uk
+
+	Last modified: 06.02.2005
+*/
+
+%definition
+
+delim	[ \t\n]
+ws		{delim}+
+digit	[0-9]
+number	{digit}+(\.{digit}+)?(E[+\-]?{digit}+)?
+
+%specification
+
+
+{ws}	;
+
+
+{number}	attributeStr->f = atof( yyText );	return( ZAHL );
+
+";"			return( SEMIKOLON );
+
+"-"			return( SUB );
+
+"+"			return( ADD );
+
+"*"			return( MUL );
+
+"/"			return( DIV );
+
+\0			return( ACCEPT );
+
+"("			return( KLOPEN );
+
+")"			return( KLCLOSE);
+
+

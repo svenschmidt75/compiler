@@ -1,0 +1,157 @@
+
+
+%union
+{
+	int	test;
+}
+
+
+%grammar
+
+
+goal
+	:	initlex sect1 sect1end sect2 initforrule
+	;
+
+initlex
+	:	'EPSILON' \{ c++ \}
+	;
+
+sect1
+	:	sect1 startconddecl namelist1
+	|	sect1 options
+	|	'EPSILON'
+	;
+
+sect1end
+	:	'SECTEND'
+	;
+
+startconddecl
+	:	'SCDECL'
+	|	'XSCDECL'
+	;
+
+namelist1
+	:	namelist1 'NAME'
+	|	'NAME'
+	;
+
+options
+	:	'OPTION_OP' optionlist
+	;
+
+optionlist
+	:	optionlist option
+	|	'EPSILON'
+	;
+
+option
+	:	'OPT_OUTFILE' 'EQU' 'NAME'
+	|	'OPT_PREFIX' 'EQU' 'NAME'
+	|	'OPT_YYCLASS' 'EQU' 'NAME'
+	;
+
+sect2
+	:	sect2 scon initforrule flexrule 'NEWLINE'
+	|	sect2 scon 'BOPEN' sect2 'BCLOSE'
+	|	'EPSILON'
+	;
+
+initforrule
+	:	'EPSILON'
+	;
+
+flexrule
+	:	'BEGLINE' rule
+	|	rule
+	|	'EOF_OP'
+	;
+
+scon_stk_ptr
+	:	'EPSILON'
+	;
+
+scon
+	:	'LT' scon_stk_ptr namelist2 'GT'
+	|	'LT' 'MUL' 'GT'
+	|	'EPSILON'
+	;
+
+namelist2
+	:	namelist2 'COMMA' sconname
+	|	sconname
+	;
+
+sconname
+	:	'NAME'
+	;
+
+rule
+	:	re2 re
+	|	re2 re 'ENDLINE'
+	|	re 'ENDLINE'
+	|	re
+	;
+
+re
+	:	re 'OR' series
+	|	series
+	;
+
+re2
+	:	re 'APPEND'	// /
+	;
+
+series
+	:	series singleton
+	|	singleton
+	;
+
+singleton
+	:	singleton 'MUL'
+	|	singleton 'ADD'
+	|	singleton 'QUESTIONMARK'
+	|	singleton 'BOPEN' 'NUMBER' 'COMMA' 'NUMBER' 'BCLOSE'
+	|	singleton 'BOPEN' 'NUMBER' 'COMMA' 'BCLOSE'
+	|	singleton 'BOPEN' 'NUMBER' 'BCLOSE'
+	|	'DOT'
+	|	fullccl
+	|	'PREVCCL'
+	|	'STRINGBEG' string 'STRINGBEG'
+	|	'KLOPEN' re 'KLCLOSE'
+	|	'CHAR'
+	;
+
+fullccl
+	:	'KOPEN' ccl 'KCLOSE'
+	|	'KOPEN' 'EPS' ccl 'KCLOSE'
+	;
+
+ccl
+	:	ccl 'CHAR' 'MINUS' 'CHAR'
+	|	ccl 'CHAR'
+	|	ccl ccl_expr
+	|	'EPSILON'
+	;
+
+ccl_expr
+	:	'CCE_ALNUM'
+	|	'CCE_ALPHA'
+	|	'CCE_BLANK'
+	|	'CCE_CNTRL'
+	|	'CCE_DIGIT'
+	|	'CCE_GRAPH'
+	|	'CCE_LOWER'
+	|	'CCE_PRINT'
+	|	'CCE_PUNCT'
+	|	'CCE_SPACE'
+	|	'CCE_UPPER'
+	|	'CCE_XDIGIT'
+	;
+
+string
+	:	string 'CHAR'
+	|	'EPSILON'
+	;
+

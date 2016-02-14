@@ -1,0 +1,26 @@
+%definition
+
+%left	ADD SUB
+%left	MUL DIV
+%right	UMINUS
+
+
+%grammar
+
+/* Grammatik aus 'Praxis des Compilerbaus' */
+
+
+expr	:	expr 'ADD' term
+		|	expr 'SUB' term
+		|	'SUB' expr %prec UMINUS
+		|	term
+		;
+
+term	:	term 'MUL' factor
+		|	term 'DIV' factor
+		|	factor
+		;
+
+factor	:	'KLOPEN' expr 'KLCLOSE'
+		|	'ZAHL'
+		;

@@ -1,0 +1,17 @@
+
+
+%grammar
+
+
+start	:	expr	\{ cout << $1; \}
+		;
+
+expr	:	term expr
+		|	'ZAHL'
+		;
+
+term	:	'ADD'
+		|	'SUB'
+		|	'EPSILON'
+		;
+

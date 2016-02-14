@@ -1,0 +1,29 @@
+/*
+	Beispiel-Code für miniC
+	2005 by Sven Schmidt
+*/
+
+
+int	a, b, c, d;
+char	xy;
+
+
+
+{
+	short	q;
+	char	xy;
+	int		a, b, c, d;
+
+	{
+		long	a, p;
+		int		d, e;
+
+		{
+			char	x;
+			bool	y, p, q;
+
+			if( a < b )
+				a = b + q;
+		}
+	}
+}

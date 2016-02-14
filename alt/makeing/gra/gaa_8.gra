@@ -1,0 +1,55 @@
+/* ;PL/0-Grammatik */
+
+%definition
+
+
+%nterm_type <l> program block statement condition expr factor term
+
+%union
+\{
+	WORD	i;
+	LONG	l;
+\}
+
+
+%grammar
+
+program		:	block 'PERIOD'
+			;
+
+block		:	[ 'CONST' 'IDENT' 'EQU' 'NUMBER' { 'COMMA' 'IDENT' 'EQU' 'NUMBER' } 'SEMI' ] 
+				[ 'VAR' 'IDENT' { 'COMA' 'IDENT' } 'SEMI' ]
+				{ 'PROCEDURE' 'IDENT' 'SEMI' block 'SEMI' \{ $$ = $1; \} } statement \{ $$ = $1; \}
+			;
+
+statement	:	[ 'IDENT' 'BECOMES' expr
+			|	'CALL' 'IDENT'
+			|	'BEGIN' statement { 'SEMI' statement } 'END'
+			|	'IF' condition 'THEN' statement
+			|	'WHILE' condition 'DO' statement ]
+			;
+
+condition	:	'ODD' expr
+			|	expr ( 'EQU' \{ $a1 = 1; \} | 'RAUTE' | 'LESS' | 'LESS_EQU' | 'GREATER' | 'GREATER_EQU' ) expr
+			;
+
+expr		:	[ 'ADD' \{ $a1 = 1; \} | 'SUB' \{ $a1 = 2; \}  ] term { ( 'ADD' | 'SUB' ) term }
+\{
+	if( $a1 == 1 )
+		$$.l = $2.l;
+
+	else if( $a1 == 2 )
+		$$.l = -$2.l;
+\}
+			;
+
+term		:	factor { ( 'MUL' \{ $a1 = 1; \} | 'DIV' \{ $a1 = 2; \} ) factor \{ $$ *= $2; \} }
+\{
+	$$ *= $1;
+\}
+			;
+
+factor		:	'IDENT'
+			|	'NUMBER'
+			|	'KLOPEN' expr 'KLCLOSE'
+			;

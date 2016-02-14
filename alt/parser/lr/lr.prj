@@ -1,0 +1,19 @@
+;Projektdatei fÅr LR-Parser-Generator von Sven Schmidt
+
+LR.TTP
+
+=
+
+PCSTART.LIB        ; startup code
+
+;Namem der C-Quellen
+SOURCE\INIT.C
+SOURCE\ANALYZE.C
+SOURCE\GENERATE.C
+SOURCE\OUTPUT.C
+SOURCE\GEN_PARS.C
+
+PCSTDLIB.LIB       ; standard library
+PCEXTLIB.LIB       ; extended library
+PCTOSLIB.LIB       ; TOS library
+PC881LIB.LIB       ; floating point library

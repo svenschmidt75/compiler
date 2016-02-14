@@ -1,0 +1,102 @@
+%{
+%}
+
+%%
+
+
+
+goal
+		:	 sect2 initforrule
+		
+
+sect2
+		:	 sect2 initforrule flexrule "LINEFEED"
+		|	 
+		
+
+initforrule
+		:	 
+		
+
+flexrule
+		:	 start_condition "BEG_LINE" rule
+		|	 start_condition rule
+		|	 "BEG_LINE" rule
+		|	 rule
+		|	 start_condition "EOF_OP"
+		|	 "EOF_OP"
+		
+
+start_condition
+		:	 "BEG_NAME_LIST" namelist2 "END_NAME_LIST"
+		
+
+namelist2
+		:	 namelist2 "COMMA" "NAME"
+		|	 "NAME"
+		
+
+rule
+		:	 re2 re
+		|	 re2 re "END_SYM"
+		|	 re "END_SYM"
+		|	 re
+		
+
+re
+		:	 re "OR" series
+		|	 series
+		
+
+re2
+		:	 re "LOOKAHEAD_SYM"
+		
+
+series
+		:	 series single
+		|	 single
+		
+
+
+single
+		:	init_singleton singleton
+		|	
+		
+
+
+init_singleton
+		:	
+		
+
+
+singleton
+		:	 singleton "MORE"
+		|	 singleton "ONE_OR_MORE"
+		|	 singleton "ONE_OR_ZERO"
+		|	 singleton "BROPEN" "NUMBER" "COMMA" "NUMBER" "BRCLOSE"
+		|	 singleton "BROPEN" "NUMBER" "COMMA" "BRCLOSE"
+		|	 singleton "BROPEN" "NUMBER" "BRCLOSE"
+		|	 "ANY_CHAR"
+		|	 fullccl
+		|	 "PREVCCL"
+		|	 "BEG_STRING" string "END_STRING"
+		|	 "KLOPEN" re "KLCLOSE"
+		|	 "CHARACTER"
+		
+
+
+fullccl
+		:	 "AROPEN" ccl "ARCLOSE"
+		|	 "AROPEN" "EXP" ccl "ARCLOSE"
+		
+
+ccl
+		:	 ccl "CHARACTER" "TO" "CHARACTER"
+		|	 ccl "CHARACTER"
+		|	 
+		
+
+string
+		:	 string "CHARACTER"
+		|	 
+		

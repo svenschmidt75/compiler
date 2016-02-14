@@ -1,0 +1,19 @@
+/*
+;Ist LR, aber nicht SLR
+; Drachenbuch S. 278
+*/
+
+%grammar
+
+
+
+S	->	L 'EQU' R
+	|	R
+	;
+
+L	->	'MUL' R
+	|	'ID'
+	;
+
+R	->	L
+	;

@@ -1,0 +1,99 @@
+Interna zu SSLEX
+----------------
+
+Last modified: 06.02.2005
+
+
+
+Zuerst wird die Start-Condition (SC) INITIAL als %s erzeugt, d.h. alle NEAen ohne SC werden auch in diese
+SC eingetragen. Also, alle NEAen werden einen SC zugeordnet. Dabei wird zwischen NEAen unterschieden,
+die am Zeilenanfang stehen müssen und solchen, die überall stehen können.
+Jede SC ist also selbst ein Scanner im Scanner.
+Jeder NEA wird in das Element
+
+//Array mit allen NEAen, die zu dieser SC gehören
+NEA_STR		**neaArr;
+
+eingetragen. Die Anzahl der NEAen einer SC steht in
+
+//Anzahl der NEA_STR in neaArr
+long		neaArrCnt;
+
+Die Anzahl der NEAen, die am Zeilenanfang stehen müssen, steht in
+
+//Anzahl der NEAen, die nur am Zeilenanfang stehen dürfen
+long		nea2Anz;
+
+die derer, die überall stehen dürfen in
+
+//Anzahl der NEAen, die überall stehen dürfen
+long		nea1Anz;
+
+
+Ein NEA besteht aus der NEA_STR. Die NEA-Zustände werden fortlaufend nummeriert,
+d.h. nur der Start-Zustand des ersten NEA überhaupt fängt bei 1 an. Alle
+NEA-Zustände werden in der Struktur
+
+//Array mit den Zuständen
+STATE_STR		**stateStr;
+
+//Anzahl der Einträge in stateStr
+ulong			stateStrCnt;
+
+abgelegt. Diese enthält Informationen über die Art des NEA-Zustandes (Start-,
+Finit- oder Lookahead-Zustand) und sie enthält ein Array mit den
+Zustandsübergängen des Zustands. In der NEA_STR steht der Index des
+Start- und Endzustandes in der stateStr. Zusätzlich steht dort, ob der NEA vom
+Typ <<EOF>> ist, d.h. ob er ausgeführt werden soll, wenn das Ende der Eingabe
+erreicht wurde.
+Von jedem Zustand können weitere Zustands-Übergänge ausgehen. Sie stehen in der
+BRA_STR der STATE_STR des jeweiligen Zustandes.
+Wir nennen den Zustand, von dem wir die Zustands-Übergänge aus beschreiben
+wollen, A.
+Für jeden Zustand, der von A für ein Eingabezeichen ausgeht, gibt es eine
+BRA_STR. In ihr steht der Zielzustand (Index in stateStr) und ob es sich um
+einen epsilon-Übergang handelt. Weiter steht in der BRA_STR die Zeichenklasse,
+aus der hervorgeht, für welche Zeichen der Übergang von A aus stattfindet.
+
+
+Wenn alle NEAen erzeugt wurden, dann wird für jede SC ein Start-Zustand erzeugt
+und mit den jeweiligen NEAen mit einem epsilon-Übergäng verbunden. So gibt es
+für jede SC einen Start-Zustand.
+Anschließend werden die NEAen jeder SC zu DEAen transformiert. Für die DEAen,
+die nur am Zeilenanfang stehen dürfen, gibt es einen eigenen Start-Zustand, der
+nur dann aktiviert wird, wann der Scanner am Anfang einer Zeile steht.
+
+Nach der Umwandlung in einen DEA wird die Zustandsmenge minimiert. Es werden
+dazu die Start-Zustände der NEAen, die überall stehen dürfen in eine Gruppe
+A geschrieben, die derer, die nur am Zeilenanfang stehen dürfen, in eine
+ANDERE Gruppe B. Die Finit-Zustände zu ein un denselben NEAen werden in eine
+Gruppe eingetragen. Man beachte, dass ein DEA-Zustand einer Menge von
+NEA-Zuständen entspricht, eine Gruppe einer Menge von DEA-Zuständen. Die Idee
+ist nun herauszufinden, ob es in einer Gruppe DEA-Zustände B gibt, die einen
+Übergang zu einem DEA-Zustand C einer ANDEREN Gruppe haben. Wenn dem so ist,
+müssen die entsprechenden DEA-Zustände B aus der Gruppe entfernt werden und in
+eine neue Gruppe eingetragen werden. Dies wiederholt man solange, bis keine
+neue Gruppe mehr erzeugt wird. Der resultierende DEA erkannt die gleiche
+Eingabe, ist aber minimal.
+
+
+
+
+
+das Scannen des Textes - Driver-Routine
+---------------------------------------
+
+Das Scannen der Eingabe erfolgt in yyLex des von SSLEX generierten Scanners.
+Für jeden Zustand wird geprüft, ob es ein Accept-Zustand ist. Wenn ja, so wird
+der Zustand gespeichert, denn falls der Scanner ein längeres Muster findet, es
+dann aber doch nicht auf einen Accept-Zustand trifft, dann wird zum letzen Accept-Zustand
+gesprungen. Gibt es keinen, so liegt für das gefundenen Muster kein regulärer Ausdruck
+vor und es wird eine Fehlermeldung ausgegeben.
+Für Lookahead-Regeln erzeugt SSLEX eine Tabelle namens ssLexLA. Lautet eine Regel z.B.
+
+	";"$
+
+so wird nur dann akzeptiert, wenn das ; am Ende einer Zeile steht. Dazu wird im Zustand
+nach Lesen von ; Eintrag in ssLexLA stehen, so dass der Scanner sich die Position im
+zu scannenden Text merkt. Akzeptiert er schliesslich mit ";"$, so wird die Position
+im Text auf den zuvor gespeicherten Wert zurückgesetzt.

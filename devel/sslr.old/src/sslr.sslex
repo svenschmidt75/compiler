@@ -1,0 +1,762 @@
+/*
+	Scanner-Spezifikation für das Projekt SSLR, einem einfachen S-,LA-, LR-Parser-Generator.
+	(c) 2005 by Sven Schmidt
+	s.schmidt@lboro.ac.uk
+*/
+
+
+%include
+\{
+	//initialize user defined variables
+	#define SSLEX_INIT
+\}
+
+
+
+%definition
+
+%x SC_DEFINITION SC_GRAMMAR SC_COMMENT SC_UNION SC_SEMACT
+%x SC_PREC SC_ERROR SC_CODEBLOCK
+
+
+WS			[[:blank:]]+
+OPTWS		[[:blank:]]*
+NOT_WS		[^[:blank:]\n]
+
+NL			\r?\n
+
+NAME		([[:alpha:]_][[:alnum:]_-]*)
+NOT_NAME	[^[:alpha:]_*\n]+
+
+ESCSEQ		(\\([^\n]|[0-7]{1,3}|x[[:xdigit:]]{1,2}))
+
+
+
+	private:
+
+	//werden unverändert ins Header-File des erzeugten Scanners übernommen
+
+	//Kommentar scannen
+	bool			cComment;
+
+	//%union-Angabe steht hier
+	char			*unionTxt;
+
+	//%incl-Angabe steht hier
+	char			*incl;
+
+	//Priorität eines Terminals
+	int				priority;
+
+	//Assoziativität eines Terminals
+	int				assoc;
+
+	//für eigene Erweiterungen
+	char			*extension;
+
+	/*
+		In genau diesem Abschnitt werden Variablen definiert, die in das erzeugte Header-File
+		des generierten Scanners aufgenommen werden sollen.
+	*/
+	ulong			userDefHeaderAnz;
+	char			**userDefHeader;
+
+
+
+
+
+
+
+	//Methoden
+
+	//eigene Variablen initialisieren
+	void init( void );
+
+	//eigene Variablen deinitialisieren
+	void deinit( void );
+
+	//%union scannen
+	void scanUnion( void );
+
+	//%include-Angabe scannen
+	void scanInclude( void );
+
+	//%extension scannen
+	void scanExtension( void );
+
+	//Deklarationen in Header-File des erzeugten Scanners eintragen
+	void insertUserDefHeader( char * );
+
+
+	public:
+
+	//%extension-Angaben liefern
+	char *getExtension( void );
+
+	//%include-Angaben liefern
+	char *getInclude( void );
+
+	//Alle eingerückten Zeilen in %definition werden in das Header-File des erzeugten
+	//Scanners eingefügt. Dies nutzt man, um in den Aktion-Teilen benutzte Variablen
+	//zu deklarieren.
+	char** getUserDefHeader( int & );
+
+
+
+
+%specification
+
+<INITIAL>{
+
+	^{OPTWS}{NL}	/* allows blank lines in section 1 */
+
+	{OPTWS}			/* Leerzeichen */
+
+	{NL}			/* neue Zeile */
+
+	^"//".*			/* C++-Kommentar */
+
+	^"/*"			{
+						//scanne einen C-Kommentar
+						cComment = true;
+						yyPushState( SC_COMMENT );
+					}
+
+	^"%include".*	{
+						//eigene Erweiterungen
+						if( incl )
+							//ist schon mal benutzt
+							cerr << "sslr: line " << yyLineno << ": %include already occured!" << endl;
+
+						else
+							//den Include-Teil einfach einlesen
+							scanInclude();
+					}
+
+	//%union-Angabe
+	^"%union".*		{
+						//%union scannen
+
+						/*
+							Hier wird die %union-Angabe einmal komlett gelesen ohne sie zu scannen, da
+							sie so ins erzeugte Header-File eingetragen wird (Damit auch die
+							Kommentare eingetragen werden). Anschließend wird die Angabe aber richtig
+							gescannt, damit die semantischen Typen auch geprüft werden können.
+						*/
+						scanUnion();
+
+						//nun die semantischen Typen in %union scannen
+						BEGIN( SC_UNION );
+
+						//zurückliefern
+						attributeStr->name = unionTxt;
+						return( UNION );
+					}
+
+	^"%definition".*	{
+							//es folgt der Definitions-Teil
+							BEGIN( SC_DEFINITION );
+
+							//zurückgeben
+							return( DEFINITION );
+						}
+}
+
+
+<SC_COMMENT>{
+
+	"*/"			{
+						//sind wir noch in der Analyse eines C-Kommentars?
+						if( cComment == true )
+							//Ja, die oberste SC entfernen
+							yyPopState();
+					}
+
+	"*"				;
+
+	//alles ausser * und \n mind. einmal
+	[^*\n]+			;
+
+	//alles ausser * und \n mind. nullmal, gefolgt von einer neuen Zeile
+	[^*\n]*{NL}		;
+}
+
+
+<SC_DEFINITION>{
+
+	^"//".*			/* C++-Kommentar */
+
+	^"/*"			{
+						//scanne einen C-Kommentar
+						cComment = true;
+						yyPushState( SC_COMMENT );
+					}
+
+	^{OPTWS}{NL}	/* allows blank lines in %definition section */
+
+	^{WS}			{
+						//user-defined Deklarationen zum Übernehmen in die erzeugte Klasse
+						BEGIN( SC_CODEBLOCK );
+					}
+
+	^"%include".*	{
+						//eigene Erweiterungen müssen vor %definition stehen!
+						cerr << "sslr: line " << yyLineno << ": %include must be placed before %definition!" << endl;
+					}
+
+	//%union-Angabe
+	^"%union".*		{
+						//%union muss vor %definition stehen!
+						cerr << "sslr: line " << yyLineno << ": %union must be placed before %definition!" << endl;
+					}
+
+	^"%ntermType"	{
+						//er folgen Nichtterminale, denen ein semantischer Typ zugewiesen wird
+						return( NTERM_TYPE );
+					}
+
+	^"%termType"	{
+						//er folgen Terminale, denen ein semantischer Typ zugewiesen wird
+						return( TERM_TYPE );
+					}
+
+	^"%left"		{
+						//ein Terminal soll links-assoziativ sein
+						return( LEFT_ASSOC );
+					}
+
+
+	^"%right"		{
+						//ein Terminal soll rechts-assoziativ sein
+						return( RIGHT_ASSOC );
+					}
+
+	^"%nonassoc"	{
+						//ein Terminal soll nicht-assoziativ sein
+						return( NON_ASSOC );
+					}
+
+	"<"				{
+						//ein semantischer Typ steht in <typ>
+						return( semTypeOpen );
+					}
+
+	">"				{
+						//ein semantischer Typ steht in <typ>
+						return( semTypeClose );
+					}
+
+	{NAME}			{
+						//Variable oder sem. Typ
+						attributeStr->name = yyStrCpy( yyText );
+						return( IDENT );
+					}
+
+	"%grammar"		{
+						//jetzt beginnt die eigentliche Grammatik
+						BEGIN( SC_GRAMMAR );
+
+						//zurückgeben
+						return( GRAMMAR );
+					}
+}
+
+
+<SC_CODEBLOCK>{
+	.+		{
+				/*
+					Im %definition-Teil eingerückte Zeilen werden unverändert ins erzeugte
+					Header-File des Scanners übernommen. Mit ihnen kann man z.b. im %extension-Teil
+					benutzte Variablen oder Funktionen deklarieren.
+				*/
+				insertUserDefHeader( yyText );
+			}
+
+	{NL}	{
+				//wird später ins Header-File eingetragen
+				insertUserDefHeader( yyText );
+
+				//nach dem Lesen einer Zeile (die ja mit {NL} endet), wieder in den normalen Modus
+				BEGIN( SC_DEFINITION );
+			}
+}
+
+
+<SC_UNION>{
+
+	//dieser ganze Bereich dient nur dazu, die semantischen Typen aus einer typischen Angabe wie
+	//char	*txt;
+	//zu extrahieren, um diese zu prüfen mit den Angaben in %termType und %ntermType.
+
+	^{OPTWS}{NL}	/* allows blank lines in union section */
+
+	{NL}			/* neue Zeile */
+
+	{OPTWS}			/* Leerzeichen */
+
+	{OPTWS}"//".*	/* C++-Kommentar */
+
+	{OPTWS}"/*"		{
+						//scanne einen C-Kommentar
+						cComment = true;
+						yyPushState( SC_COMMENT );
+					}
+
+	//Beginn
+	"{"				{
+						//steht nach %union
+						return( BOPEN );
+					}
+
+	"}"				{
+						//steht nach %union
+
+						//wieder nach INITIAL
+						BEGIN( INITIAL );
+
+						//zurückliefern
+						return( BCLOSE );
+					}
+
+	//Namen
+	{NAME}			{
+						//Identifier
+						//z.b. char		*name;
+						attributeStr->name = yyStrCpy( yyText );
+						return( IDENT );
+					}
+
+	//Zeiger
+	"*"				{
+						//Zeiger
+						return( AST );
+					}
+
+	//Ende der Deklaration
+	";"				{
+						//Ende der Deklaration
+						return( SEMIKOLON );
+					}
+}
+
+
+<SC_GRAMMAR>{
+
+	{OPTWS}		/* Leerzeichen */
+
+	{NL}		/* neue Zeile */
+
+	^{OPTWS}"//".*	/* C++-Kommentar */
+
+	^{OPTWS}"/*"	{
+						//scanne einen C-Kommentar
+						cComment = true;
+						yyPushState( SC_COMMENT );
+					}
+
+	^{NAME}		{
+					//eine neue Produktion
+					attributeStr->name = yyStrCpy( yyText );
+					return( IDENT );
+				}
+
+	":"			|
+	"::="		|
+	":="		|
+	"->"		/* Separator */ return( SEP );
+
+	"'"{NAME}"'"	{
+						/* Terminal */
+						char *tmp = yyStrCpy( yyText );
+
+						//Anzahl zu kopierender Zeichen
+						int	anz = strlen( tmp ) - 2;
+
+						//entferne die ' im Zeichenstrom
+						char *tmp2 = strncpy( tmp, &tmp[1], anz );
+						tmp2[anz] = 0;
+
+						//zurückliefern
+						attributeStr->name = tmp2;
+						return( TERMINAL );
+					}
+
+	{NAME}			{
+						/* Nicht-Terminal */
+						attributeStr->name = yyStrCpy( yyText );
+						return( NON_TERMINAL );
+					}
+
+	";"$		/* Ende einer Produktion */ return( END_OF_PRODUCTION );
+
+	"|"			/* Eine neue Alternative */ return( NEW_ALTERNATIVE );
+
+	"\\{"		/* eine semantische Aktion */ BEGIN( SC_SEMACT );
+
+	"("			/* EBNF-Symbol */ return( KLOPEN );
+	")"			/* EBNF-Symbol */ return( KLCLOSE );
+	"{"			/* EBNF-Symbol */ return( BOPEN );
+	"}"			/* EBNF-Symbol */ return( BCLOSE );
+	"["			/* EBNF-Symbol */ return( EOPEN );
+	"]"			/* EBNF-Symbol */ return( ECLOSE );
+
+	"%prec"		{
+					/* Der Alternative wird die Priorität des folgenden Terminals zugewiesen */
+					BEGIN( SC_PREC );
+					return( PREC );
+				}
+
+	"%error"	{
+					//Es folgen Fehlerangaben zu einer Alternative
+					BEGIN( SC_ERROR );
+					return( ERROR );
+				}
+
+	^"%extension".*		{
+							/*
+								Im %extension-Teil kann man eigene Erweiterungen platzieren, die
+								später unverändert ins erzeugte cpp-File des Scanners eingetragen
+								werden, also z.b. Hilfsroutinen, etc.
+							*/
+							if( extension )
+								//%extension wurde mehrfach angegeben
+								cerr << "sslr: line " << yyLineno << ": %extension already occured!" << endl;
+
+							else
+								//einlesen
+								scanExtension();
+						}
+}
+
+
+<SC_SEMACT>{
+
+	"\\}"		{
+					/* Ende der semantischen Aktion */
+					BEGIN( SC_GRAMMAR );
+
+					//Länge von yyText
+					unsigned long l = getYYLeng();
+
+					//Abschluss aus yyText entfernen
+					yyText[l - 2] = 0;
+
+					//übergeben
+					attributeStr->name = yyStrCpy( yyText );
+
+					//zurückgeben
+					return( SEMACT );
+				}
+
+	.|{NL}		/* jedes andere Zeichen merken */ yyMore();
+}
+
+
+<SC_PREC>{
+
+	{OPTWS}		/* Leerzeichen */
+
+	{NAME}		{
+					/* Terminal */
+					BEGIN( SC_GRAMMAR );
+					return( TERMINAL );
+				}
+
+	.			{
+					//Fehler
+					cerr << "sslr: line " << yyLineno << ": Invalid character " << yyText << " after %prec!" << endl;
+
+					//weiter analysieren
+					BEGIN( SC_GRAMMAR );
+				}
+}
+
+<SC_ERROR>{
+
+	{OPTWS}"//".*	/* C++-Kommentar */
+
+	{OPTWS}"/*"		{
+						//scanne einen C-Kommentar
+						cComment = true;
+						yyPushState( SC_COMMENT );
+					}
+
+	"OVERREAD"	/* Eingabe überlesen */ return( OVERREAD );
+	"POP"		/* Zustände vom Parse-Stack entfernen */ return( POP );
+	"SHIFT"		/* ein Terminal schieben */ return( SHIFT );
+	"EXIT"		/* den Parse-Prozess stoppen */ return( EXIT );
+	"DELETE"	/* ein Terminal aus der Eingabe entfernen */ return( DELETE );
+	"SEM"		/* trotz des Fehlers weiter semantische Aktionen auswerten */ return( SEM );
+
+	{OPTWS}		/* Leerzeichen */
+
+	{NL}		/* neue Zeile */
+
+	[[:digit:]]+	{
+						/* Position des Punktes in einem LR-Item */
+						attributeStr->integer = atoi( yyText );
+						return( NUMBER );
+					}
+
+	":"			/* Trenner */ return( DB );
+
+	{NAME}		{
+					/* Terminal */
+					attributeStr->name = yyStrCpy( yyText );
+					return( TERMINAL );
+				}
+
+	"!"			/* Alle Terminale, ausser den angegebenen */ return( NOT );
+
+	"{"			/* %error wird in geschweiften Klammer angegeben */ return( BOPEN );
+	"}"			{
+					/* %error wird in geschweiften Klammer angegeben */
+					BEGIN( SC_GRAMMAR );
+					return( BCLOSE );
+				}
+
+	"("			/* bei der Negation, !, sind Klammern notwendig */ return( KLOPEN );
+	")"			/* bei der Negation, !, sind Klammern notwendig */ return( KLCLOSE );
+
+	","			/* Komma zum Trennen der Terminale in einer Fehleranweisung */ return( COMMA );
+
+	\"[^\n\"]*\"	{
+					/* Die Fehlermeldung zu einer Fehlerangabe */
+					attributeStr->name = yyStrCpy( yyText );
+					return( STRING );
+				}
+}
+
+
+
+%extension
+\{
+	//eigene Erweiterungen und Hilfsroutinen
+
+void SSLEXScanner::init( void )
+{
+	//initialize user defined variables
+	unionTxt = 0L;
+	incl = 0L;
+	extension = 0L;
+	userDefHeader = 0L;
+	userDefHeaderAnz = 0;
+}
+
+
+void SSLEXScanner::deinit( void )
+{
+	//deinitialize user defined variables
+
+	if( unionTxt )
+		delete[] ( unionTxt );
+
+	if( incl )
+		delete[] ( incl );
+
+	if( extension )
+		delete[] ( extension );
+
+
+	//user-def. Header-Angaben freigeben?
+	if( userDefHeader )
+	{
+		//alle Zeilen
+		for( i = 0; i < userDefHeaderAnz; i++ )
+			delete[] ( userDefHeader[i] );
+
+		delete[] ( userDefHeader );
+	}
+}
+
+
+void SSLEXScanner::scanUnion( void )
+{
+	//%union scannen
+	ulong	size;
+	char	*base, *myPos = pos;
+
+	//die öffnende Klammer überlesen
+	while( *myPos != '{' )
+		//löschen
+		myPos++;
+
+	//löschen
+	myPos++;
+
+	//Position merken
+	base = myPos;
+
+	//nun bis zur schließenden Klammer
+	while( !( *myPos == '}' ) )
+	{
+		//Überlauf?
+		if( myPos >= end )
+		{
+			//Fehler
+			cerr << "sslr: line " << yyLineno << ": Missing } in %union!" << endl;
+			exit( 1 );
+		}
+
+		myPos++;
+	}
+
+	//extrahieren
+	size = myPos - base + 1;
+
+	//Speicher anfordern
+	unionTxt = new( char[size] );
+
+	//copieren
+	strncpy( unionTxt, base, size );
+
+	//abschließen
+	unionTxt[size - 1] = 0;
+}
+
+
+void SSLEXScanner::scanInclude( void )
+{
+	//%include-Angabe scannen
+	ulong	size;
+	char	*base, *base2 = pos;
+
+	//aktuelle Position im Text merken
+	base = pos;
+
+	//der Abschluss muss am Anfang einer Zeile stehen
+	while( !( ( pos[-1] == '\n' ) && ( pos[0] == '\\' ) && ( pos[1] == '}' ) ) )
+	{
+		//Überlauf?
+		if( pos >= end )
+		{
+			//Fehler
+			cerr << "sslr: line " << yyLineno << ": Missing } in %include!" << endl;
+			exit( 1 );
+		}
+
+		pos++;
+	}
+
+	//löschen
+	pos += 2;
+
+	//extrahieren
+	size = pos - base + 1;
+
+	//Speicher anfordern
+	incl = new( char[size] );
+
+	//copieren
+	strncpy( incl, base, size - 1 );
+
+	//abschließen
+	incl[size - 1] = 0;
+
+	//Zeilennummer korrigieren
+	setupYYLineno( base2, pos );
+}
+
+
+char *SSLEXScanner::getInclude( void )
+{
+	//%include-Angaben liefern
+	return( incl );
+}
+
+
+void SSLEXScanner::scanExtension( void )
+{
+	//%extension-Angabe scannen
+	ulong	size;
+	char	*base;
+
+	//aktuelle Position im Text merken
+	base = pos;
+
+	//der Abschluss muss am Anfang einer Zeile stehen
+	while( !( ( pos[-1] == '\n' ) && ( pos[0] == '\\' ) && ( pos[1] == '}' ) ) )
+	{
+		//Überlauf?
+		if( pos >= end )
+		{
+			//Fehler
+			cerr << "sslex: line " << yyLineno << ": Missing } in %extension!" << endl;
+			exit( 1 );
+		}
+
+		pos++;
+	}
+
+	//löschen
+	pos += 2;
+
+	//extrahieren
+	size = pos - base + 1;
+
+	//Speicher anfordern
+	extension = new( char[size] );
+
+	//copieren
+	strncpy( extension, base, size - 1 );
+
+	//abschließen
+	extension[size - 1] = 0;
+}
+
+
+char *SSLEXScanner::getExtension( void )
+{
+	//%extension-Angaben liefern
+	return( extension );
+}
+
+
+void SSLEXScanner::insertUserDefHeader( char *str )
+{
+	/*
+		Alle eingerückten Zeilen in %definition werden in das Header-File des erzeugten
+		Parsers eingefügt. Dies nutzt man, um in den Aktion-Teilen benutzte Variablen
+		zu deklarieren.
+	*/
+	char	**tmp, *copy;
+
+	//genug Speicher anfordern
+	tmp = new( char *[userDefHeaderAnz + 1] );
+
+	//alte Zeiger kopieren
+	memcpy( tmp, userDefHeader, sizeof( char * ) * userDefHeaderAnz );
+
+	//alten Speicher freigeben?
+	if( userDefHeader )
+		delete[] ( userDefHeader );
+
+	//Zeiger umkopieren
+	userDefHeader = tmp;
+
+	//string kopieren
+	copy = yyStrCpy( str );
+
+	//eintragen
+	userDefHeader[userDefHeaderAnz++] = copy;
+}
+
+
+char **SSLEXScanner::getUserDefHeader( int &anz )
+{
+	/*
+		Alle eingerückten Zeilen in %definition werden in das Header-File des erzeugten
+		Parsers eingefügt. Dies nutzt man, um in den Aktion-Teilen benutzte Variablen
+		zu deklarieren.
+	*/
+
+	//Anzahl der Zeilen
+	anz = userDefHeaderAnz;
+
+	//zurückliefern
+	return( userDefHeader );
+}
+
+
+\}
+

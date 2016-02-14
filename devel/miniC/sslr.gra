@@ -1,0 +1,97 @@
+/*
+Grammatik in BNF-Form. Generiert vom SSLR-Parser-Generator V0.5a.
+(c) 2002-2005 by Sven Schmidt
+s.schmidt@lboro.ac.uk
+*/
+
+program
+	->	 definitions 	/* Priority: 0 */
+	;
+
+definitions
+	->	 definition 	/* Priority: 0 */
+	|	 definitions  definition 	/* Priority: 0 */
+	;
+
+definition
+	->	 stmt_list 	/* Priority: 0 */
+	;
+
+declarations
+	->	 declarations  declaration 	/* Priority: 0 */
+	|	 declaration 	/* Priority: 0 */
+	;
+
+declaration
+	->	 type_specifier  declarator_list  'SEMIKOLON' 	/* Priority: -1 */
+	;
+
+declarator_list
+	->	 'IDENT' 	/* Priority: -1 */
+	|	 declarator_list  'COMMA'  'IDENT' 	/* Priority: -1 */
+	;
+
+type_specifier
+	->	 'CHAR' 	/* Priority: -1 */
+	|	 'BOOL' 	/* Priority: -1 */
+	|	 'SHORT' 	/* Priority: -1 */
+	|	 'INT' 	/* Priority: -1 */
+	|	 'LONG' 	/* Priority: -1 */
+	;
+
+stmt_list
+	->	 stmt 	/* Priority: 0 */
+	|	 stmt_list  stmt 	/* Priority: 0 */
+	;
+
+stmt
+	->	 'IDENT'  'EQU'  expr  'SEMIKOLON' 	/* Priority: -1 */
+	|	 'DO'  stmt  'WHILE'  expr  'SEMIKOLON' 	/* Priority: -1 */
+	|	 'WHILE'  expr  stmt 	/* Priority: -1 */
+	|	 'IF_STMT'  expr  stmt  'ELSE_STMT'  stmt 	/* Priority: 2 */
+	|	 'IF_STMT'  expr  stmt 	/* Priority: 1 */
+	|	 declarations 	/* Priority: 0 */
+	|	 expr  'SEMIKOLON' 	/* Priority: -1 */
+	|	 'BOPEN'  auxsym_1  stmt_list  'BCLOSE' 	/* Priority: -1 */
+	;
+
+auxsym_1
+	->	 'EPSILON' 	/* Priority: 0 */
+	;
+
+expr
+	->	 expr  'LESS'  expr 	/* Priority: 11 */
+	|	 expr  'GREATER'  expr 	/* Priority: 11 */
+	|	 expr  'LESS_EQU'  expr 	/* Priority: 11 */
+	|	 expr  'GREATER_EQU'  expr 	/* Priority: 11 */
+	|	 expr  'EQUAL'  expr 	/* Priority: 10 */
+	|	 expr  'NOTEQUAL'  expr 	/* Priority: 10 */
+	|	 expr  'LOG_AND'  expr 	/* Priority: 5 */
+	|	 expr  'LOG_OR'  expr 	/* Priority: 4 */
+	|	 'LOG_NOT'  expr 	/* Priority: -1 */
+	|	 expr  'LEFT_SHIFT'  expr 	/* Priority: 12 */
+	|	 expr  'RIGHT_SHIFT'  expr 	/* Priority: 12 */
+	|	 expr  'BIN_AND'  expr 	/* Priority: 8 */
+	|	 expr  'BIN_OR'  expr 	/* Priority: 6 */
+	|	 expr  'BIN_XOR'  expr 	/* Priority: 7 */
+	|	 'BIN_NOT'  expr 	/* Priority: 9 */
+	|	 expr  'ADD'  term 	/* Priority: 13 */
+	|	 expr  'SUB'  term 	/* Priority: 13 */
+	|	 term 	/* Priority: 0 */
+	;
+
+term
+	->	 term  'MUL'  factor 	/* Priority: 14 */
+	|	 term  'DIV'  factor 	/* Priority: 14 */
+	|	 term  'MOD'  factor 	/* Priority: 14 */
+	|	 factor 	/* Priority: 0 */
+	;
+
+factor
+	->	 'KLOPEN'  expr  'KLCLOSE' 	/* Priority: -1 */
+	|	 'NUMBER' 	/* Priority: -1 */
+	|	 'TRUE' 	/* Priority: -1 */
+	|	 'FALSE' 	/* Priority: -1 */
+	|	 'IDENT' 	/* Priority: -1 */
+	;
+

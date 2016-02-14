@@ -1,0 +1,12 @@
+Datenstrukturen
+---------------
+
+
+
+CGrammar, mit allen Produktionen, %prec-Angaben. %left, %right, %nonassoc, etc.
+
+CAlt - Alternative, mit einem Array aus Zeigern auf die Hash-Klasse des
+jeweiligen Terminals/Nichtterminals
+
+CHashTab - Klasse mit Informationen über das Terminal/Nichtterminal
+

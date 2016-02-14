@@ -1,0 +1,20 @@
+Für den ganzen Compiler müssen die Länge eines bestimmten Variablentyps bekannt sein.
+Also
+
+sizeof(INT)=4 Bytes
+sizeof(SHORT)=2 Bytes
+sizeof(CHAR)=1 Byte
+sizeof(LONG)=4 Bytes
+
+
+
+
+
+
+
+
+
+
+Floating Point
+--------------
+

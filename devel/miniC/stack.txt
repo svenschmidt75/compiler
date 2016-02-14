@@ -1,0 +1,191 @@
+Informationen zum MC68000
+-------------------------
+
+Last modified: 22.03.2005
+
+
+
+
+
+Der Stack
+---------
+
+Die Stack muss immer auf einer geraden Adresse zeigen!!!
+Der Stack arbeitet nach dem LIFO-Prinzip, d.h. last in first out. Der Stack wächst von hohen
+Adressen zu niedrigen, d.h. man wird den Stackpointer auf das Ende eines entsprechend reservierten
+Bereichs setzen, z.b.
+
+	.TEXT
+
+	.DATA
+
+	.BSS
+
+stack:
+	.dc.l	400
+
+
+Am Programmanfang wird man schreiben
+
+	lea.l	stack+400,sp
+
+Der Stack umfasst dann 400 Longs.
+
+Beispiel
+--------
+
+
+sp = 400
+
+move.l d0,-(sp) erniedrigt zuerst sp um einen long, d.h. um vier Bytes. Dann wird d0 dort eingetragen,
+wo sp hinzeigt, also
+
+396 = sp -> d0
+
+Der Stack sieht dann so aus:
+
+396: d0,Byte 1
+297: d0,Byte 2
+298: d0,Byte 3
+399: d0,Byte 4
+
+move.l (sp),d1 lädt den Inhalt von d0 in d1.
+
+
+
+
+
+
+
+
+Parameterübergabe
+-----------------
+
+strcpy( char *dest, char *source )
+
+entspricht
+
+move.l	#source,-(sp)
+move.l	#dest,-(sp)
+bsr		strcpy
+addq.l	#8,sp
+
+Die Parameter werden in reverse order auf den Stack gepushed. Bei einem Prozeduraufruf wird
+ausserdem die Rücksprungadresse (long) auf den Stack geschoben, also
+
+ 0(sp) -> Rücksprungadresse
++4(sp) -> dest
++8(sp) -> source
+
+
+
+
+------------------------------------
+| sp = 388 | Rücksprungadresse     |
+------------------------------------
+|      392 | dest                  |
+------------------------------------
+|      396 | source                |
+------------------------------------
+|      400 |                       |
+------------------------------------
+
+
+
+LINK
+----
+
+Um lokale Variablen zu implementieren und um den Zugriff auf die Funktionsparameter
+zu gewährleisten, bietet sich die Verwendung des link-Befehls an.
+Am Anfang einer Prozedur schreibt man
+
+link	A6,#size
+
+Size ist eine negative Zahl mit der Anzahl der Bytes für die lokalen Variablen.
+Es wird zuerst das Adressregister A6 auf den Stack geschoben, und dann der Stack um die
+Zahl size korrigiert. Es entsteht dann ein "Loch" für die lokalen Variablen.
+
+link A6,#-12 entspricht also
+
+move.l	A6,-(sp)
+move.l	sp,A6
+addq.l	#size,sp
+
+Prozedurparameter haben einen positiven Offset bzgl. A6, wobei der erste bei +8 beginnt, da
+ja die Rücksprungadresse und A6 auf dem Stack liegen.
+Lokale Variablen haben negativen Offset.
+
+Also
+
+{
+	long	a, b, c;
+
+	strcpy( dest, source );
+}
+
+entpsricht also
+
+
+0(sp):	Rücksprungadresse
+4(sp):	dest
+8(sp):	source
+
+
+Nun wird Platz für die lokalen Variablen angefordert
+
+link	A6,#-12		;3*Long=12 Bytes
+
+Also
+
+0(sp):
+12(sp):	A6	-> hier zeigt A6 hin
+16(sp):	Rücksprungadresse
+20(sp):	dest
+24(sp):	source
+
+Aber die Parameter der Prozedur und die lokalen Variablen werden nun über A6 angesprochen, da
+sie bzgl. A6 einen festen Offset haben, also
+
+
+0(A6):	alter Wert von A6
+4(A6):	Rücksprungadresse
+8(A6):	dest (1. Parameter)
+12(A6):	source
+
+Die lokalen Variablen:
+
+-4(A6):		a
+-8(A6):		b
+-12(A6):	c
+
+
+------------------------------------
+| sp = 372 | c                     |
+------------------------------------
+|      376 | b                     |
+------------------------------------
+|      380 | a                     |
+------------------------------------
+| A6 = 384 | A6                    |
+------------------------------------
+|      388 | Rücksprungadresse     |
+------------------------------------
+|      392 | dest                  |
+------------------------------------
+|      396 | source                |
+------------------------------------
+|      400 |                       |
+------------------------------------
+
+
+
+Lokale Variablen können aber auch auf dem Stack gepackt werden, ohne den Umweg über den
+link-Befehl, da dieser Overhead verursacht.
+Der Compiler muss sich dann für jede lokale Variable merken, welchen Offset sie absolut gesehen hat.
+Das ist kein Problem, denn der Stack wird nie verändert. Sollten für die Auswertung nicht genug
+Register frei sein, dann muss der Compiler temp. Variablen verwenden, die auch im Bereich der
+lokalen Variablen huntergebracht werden. Das kann der Compiler bei der Offsetausgabe dann
+berücksichtigen.
+Der Stack wird nur dann verändert, wenn eine Funktion aufgerufen werden soll. Und dann sind die
+lokalen Vereinbarungen sowieso nicht zugänglich.
+

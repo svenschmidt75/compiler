@@ -1,0 +1,39 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<!DOCTYPE KDevPrjSession>
+<KDevPrjSession>
+ <DocsAndViews NumberOfDocuments="5" >
+  <Doc0 NumberOfViews="1" URL="file:///home/sschmidt/Develop/compilerbau/devel/sslr/sslr/src/main.cpp" >
+   <View0 Type="Source" />
+  </Doc0>
+  <Doc1 NumberOfViews="1" URL="file:///home/sschmidt/Develop/compilerbau/devel/sslr/sslr/src/_sslrparser.h" >
+   <View0 Type="Source" />
+  </Doc1>
+  <Doc2 NumberOfViews="1" URL="file:///home/sschmidt/Develop/compilerbau/devel/sslr/sslr/src/_sslrparser.cpp" >
+   <View0 Type="Source" />
+  </Doc2>
+  <Doc3 NumberOfViews="1" URL="file:///home/sschmidt/Develop/compilerbau/devel/sslr/sslr/src/sslexscanner.cpp" >
+   <View0 Type="Source" />
+  </Doc3>
+  <Doc4 NumberOfViews="1" URL="file:///home/sschmidt/Develop/compilerbau/devel/sslr/sslr/src/sslexscanner.h" >
+   <View0 line="28" Type="Source" />
+  </Doc4>
+ </DocsAndViews>
+ <pluginList>
+  <kdevdebugger>
+   <breakpointList>
+    <breakpoint0 location="/home/sschmidt/Develop/compilerbau/devel/sslr/sslr/src/_sslrparser.cpp:10373" type="1" tracingFormatString="" traceFormatStringEnabled="0" condition="" tracingEnabled="0" enabled="1" >
+     <tracedExpressions/>
+    </breakpoint0>
+   </breakpointList>
+  </kdevdebugger>
+  <kdevbookmarks>
+   <bookmarks/>
+  </kdevbookmarks>
+  <kdevvalgrind>
+   <executable path="" params="" />
+   <valgrind path="" params="" />
+   <calltree path="" params="" />
+   <kcachegrind path="" />
+  </kdevvalgrind>
+ </pluginList>
+</KDevPrjSession>

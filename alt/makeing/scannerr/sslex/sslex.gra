@@ -1,0 +1,113 @@
+/*
+;Grammatik SSLEX.GRA in BNF-Form
+;Generiert von LR-Parser-Generator V0.00ž
+;(C) by Sven Schmidt
+*/
+
+
+%nterm_type <nea_str> singleton series goal
+
+%union
+\{
+	BYTE		b;
+	BYTE		*string;
+	WORD		w;
+	LONG		l;
+
+	/* Index der NEA_STR */
+	ULONG		nea_ind;
+
+	/* Zeiger auf Zeichenklasse */
+	CCL_STR		*ccl_str;
+
+\}
+
+/*
+*/
+
+
+goal
+		->	 init_sslex sslexrule \{ /* Init */ $$ = $1; \}
+		;
+
+init_sslex
+		->	'EPSILON'
+		;
+
+sslexrule
+		->	 sc 'BEG_LINE' rule
+		|	 sc rule
+		|	 'BEG_LINE' rule
+		|	 rule
+		|	 sc 'EOF_OP'
+		|	 'EOF_OP'
+		;
+
+sc
+		->	 'BEG_NAME_LIST' namelist2 'END_NAME_LIST'
+		;
+
+namelist2
+		->	 namelist2 'COMMA' predef_string
+		|	 predef_string
+		;
+
+rule
+		->	 re2 re
+		|	 re2 re 'END_SYM'
+		|	 re 'END_SYM'
+		|	 re
+		;
+
+re
+		->	 re 'OR' series
+		|	 series
+		;
+
+re2
+		->	 re 'LOOKAHEAD_SYM'
+		;
+
+series
+		->	 series singleton
+		|	 singleton
+		;
+
+singleton
+		->	 singleton 'MORE'
+		|	 singleton 'ONE_OR_MORE'
+		|	 singleton 'ONE_OR_ZERO'
+		|	 singleton 'BROPEN' 'NUMBER' 'COMMA' 'NUMBER' 'BRCLOSE'
+		|	 singleton 'BROPEN' 'NUMBER' 'COMMA' 'BRCLOSE'
+		|	 singleton 'BROPEN' 'NUMBER' 'BRCLOSE'
+		|	 singleton 'BROPEN' predef_string 'BRCLOSE'
+		|	 'BROPEN' predef_string 'BRCLOSE'
+		|	 'ANY_CHAR'
+		|	 fullccl
+		|	 'PREVCCL'
+		|	 'STRING_SYM' string 'STRING_SYM'
+		|	 'KLOPEN' re 'KLCLOSE'
+		|	 'CHARACTER'
+		;
+
+
+fullccl
+		->	 'AROPEN' ccl 'ARCLOSE'
+		|	 'AROPEN' 'EXP' ccl 'ARCLOSE'
+		;
+
+ccl
+		->	 ccl 'CHARACTER' 'TO' 'CHARACTER'
+		|	 ccl 'CHARACTER'
+		|	 'EPSILON'
+		;
+
+string
+		->	 string 'CHARACTER'
+		|	 'EPSILON'
+		;
+
+predef_string
+		->	 predef_string 'CHARACTER'
+		|	 'EPSILON'
+		;

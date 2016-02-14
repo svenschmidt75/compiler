@@ -1,0 +1,24 @@
+;Grammatik, die zum Testen des SLR-Parser-Generators dient
+
+%grammar
+
+e			:	expr
+			;
+
+expr		:	term expression
+			;
+
+expression	:	'ADD' term expression
+			|	'EPSILON'
+			;
+
+term		:	factor termission
+			;
+
+termission	:	'MUL' factor termission
+			|	'EPSILON'
+			;
+
+factor		:	'KOPEN' expr 'KCLOSE'
+			|	'IDENT'
+			;

@@ -1,0 +1,24 @@
+/*
+	Drache, Seite 271
+*/
+
+%grammar
+
+E
+	->	expr
+	;
+
+expr
+	->	expr 'ADD' term
+	|	term
+	;
+
+term
+	->	term 'MUL' factor
+	|	factor
+	;
+
+factor
+	->	'KLOPEN' expr 'KLCLOSE'
+	|	'IDENT'
+	;

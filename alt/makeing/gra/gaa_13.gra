@@ -1,0 +1,19 @@
+;Zum Testen der EPSILON-Behandlung
+
+%grammar
+
+expr	->	expr 'ADD' nterm1 fx
+		|	expr 'ADD' nterm2 fy
+		;
+
+nterm1	->	'EPSILON'
+		;
+
+nterm2	->	'EPSILON'
+		;
+
+fx		->	'TERM1'
+		;
+
+fy		->	'TERM2'
+		;

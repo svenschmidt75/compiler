@@ -1,0 +1,99 @@
+/*
+	Datenstrukturen fuer einen LR-Parser-Generator.
+	2005 by Sven Schmidt
+	s.schmidt@lboro.ac.uk
+*/
+
+
+//Jede Produktion ist ein Objekt, welches mehrere Alternativen beinhaltet
+class CProduction
+{
+private:
+
+	//die rechten Seiten, als Array
+	CAlternative	*altArray;
+
+	//Anzahl der Alternativen
+	int		altArrayAnz;
+}
+
+
+
+//die Alternativen sind ebenfalls Objekte
+class CAlternative
+{
+private:
+
+	//hier stehen die Terminale/Nichtterminale der rechten Seite einer Alternative
+	CRightElem	*rightElemArray;
+
+	//Anzahl der Elemente auf der rechten Seite
+	int		rightElemArrayAny;
+}
+
+
+
+//ein Terminal ist vom Typ CRightElem
+class CTerminal : public CRightElem
+{
+}
+
+
+
+//ein Nicht-Terminal ist vom Typ CRightElem
+class CNTerminal : public CRightElem
+{
+private:
+
+	//Nicht-Terminale haben FOLLOW-Elemente, die aus Terminalen besteht
+	CTerminal	*followStr;
+
+}
+
+
+
+//Terminale und Nicht-Terminale sind vom Typ CRightElem
+class CRightElem
+{
+private:
+
+	//egal, ob Terminal oder Nicht-Terminal, sie besitzen eine FIRST-Menge
+	CTerminal	*first;
+
+}
+
+
+
+
+
+
+
+
+
+
+
+21.03.2005
+------------------------------
+
+Die benutzerdefinierten Angaben, die durch Einrückung in das Header-File übernommen werden
+können sowie die Methoden in %extension, sollten besser in eine Klasse platziert werden,
+die öffentlich von der Basis-Scannerklasse SSLEXScanner ableitet.
+Also
+
+class SSLEXScanner
+{
+public:
+
+	int yyLex( void );
+}
+
+
+class MyProject : public SSLEXScanner
+{
+	//bla
+}
+
+
+
+
+

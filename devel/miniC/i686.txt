@@ -1,0 +1,808 @@
+Beispiele für die Übersetzung von C-Code in i686-Assembler
+----------------------------------------------------------
+
+
+
+
+
+Verzweigungen
+-------------
+
+signed
+------
+
+ge: greater equal
+g: greater
+le: less equal
+l: less
+e: equal
+n: not equal
+
+
+unsigned
+--------
+
+e: equal
+n: not equal
+ae: greater equal
+be: less equal
+b: bigger
+l: less
+
+
+
+
+
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	long	a = 5, b = 7;
+	unsigned long	x;
+
+	x = a * b;
+
+	return EXIT_SUCCESS;
+}
+
+
+	movl	$5, -4(%ebp)		;lade 5 nach a
+	movl	$7, -8(%ebp)		;lade 7 nach b
+
+Zum Multiplizieren muss der Operand anscheinend im Register eax sein.
+
+	movl	-4(%ebp), %eax		;a in eax
+	imull	-8(%ebp), %eax		;Integer-Multiplikation mit b
+	movl	%eax, -12(%ebp)		;Ergebnis in eax, in x speichern
+
+Routinen liefern bei int wohl den Rückgabewert im Register eax zurück!
+
+	movl	$0, %eax			;eax löschen, d.h. EXIT_SUCCESS
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	long	a = 5, b = 7;
+	short	x;
+
+	x = a * b;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$5, -4(%ebp)
+	movl	$7, -8(%ebp)
+	movl	-4(%ebp), %eax
+	imull	-8(%ebp), %eax
+
+Ein short ist dann movw.
+Die unteren 16 Bit des Registers eax werden dann wohl mit ax angesprochen.
+
+	movw	%ax, -10(%ebp)
+	movl	$0, %eax
+	leave
+	ret
+
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	long	a = 5, b = 7;
+	char	x;
+
+	x = a * b;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$5, -4(%ebp)
+	movl	$7, -8(%ebp)
+	movl	-4(%ebp), %eax
+	imull	-8(%ebp), %eax
+
+Ein char ist dann movb.
+Die unteren 8 Bit des Registers eax werden dann wohl mit al angesprochen.
+	movb	%al, -9(%ebp)
+	movl	$0, %eax
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	long	a = 5, b = 7;
+	char	x;
+
+	if( a > b )
+		a = 10;
+
+	else
+		a = 1;
+
+
+	return EXIT_SUCCESS;
+}
+
+
+	movl	$5, -4(%ebp)
+	movl	$7, -8(%ebp)
+	movl	-4(%ebp), %eax		;lade a nach eax
+	cmpl	-8(%ebp), %eax		;vergleiche mit b
+	jle		.L2					;less equal (Gegenteil von gt)
+	movl	$10, -4(%ebp)		;true-Teil
+	jmp		.L3					;springe hinter den else-Teil
+.L2:
+	movl	$1, -4(%ebp)		;false-Teil (else-Teil)
+.L3:
+	movl	$0, %eax
+	leave
+	ret
+
+
+Wenn also der Befehl
+if( a > b )
+auftritt, dann ist es günstiger, auf false zu prüfen, denn dann kann gleich zum
+alse-Teil gesprungen werden.
+
+Das Gegenteil von > ist <=!
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	long	a = 5, b = 7;
+	char	x;
+	bool	w = true;
+
+	if( w == true )
+		a = 10;
+
+	else
+		a = 1;
+
+
+	return EXIT_SUCCESS;
+}
+
+
+	movl	$5, -4(%ebp)
+	movl	$7, -8(%ebp)
+	movb	$1, -10(%ebp)		;bools werden also als Bytes dargestellt, true=1
+
+So kann man auch cesten, zuerst das Datenregister löschen und dann nur das unterste
+Byte in eax laden!
+
+	movl	$0, %eax
+	movb	-10(%ebp), %al		;w laden (al, weil w intern ein Byte ist)
+	cmpl	$1, %eax			;true=1
+	jne		.L11				;false->else
+	movl	$10, -4(%ebp)
+	jmp		.L12
+.L11:
+	movl	$1, -4(%ebp)
+.L12:
+	movl	$0, %eax			;EXIT_SUCCESS
+.LBE6:
+.LBE5:
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	long	a = 5, b = 7;
+	char	x;
+	bool	w = true;
+	char	p;
+
+	if( w == true )
+		a = 10;
+
+	else
+		a = 1;
+
+
+	return EXIT_SUCCESS;
+}
+
+
+	movl	$5, -4(%ebp)
+	movl	$7, -8(%ebp)
+	movb	$1, -10(%ebp)
+	movb	$7, -11(%ebp)		;es sind tatsächlich ungerade Offsets erlaubt!
+	movl	$0, %eax
+	movb	-10(%ebp), %al
+	cmpl	$1, %eax
+	jne		.L11
+	movl	$10, -4(%ebp)
+	jmp		.L12
+.L11:
+	movl	$1, -4(%ebp)
+.L12:
+	movl	$0, %eax
+.LBE6:
+.LBE5:
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	long	a = 5, b = 7;
+	char	x;
+	bool	w = true;
+	char	p = 7;
+
+	x = a < b;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$5, -4(%ebp)
+	movl	$7, -8(%ebp)
+	movb	$1, -10(%ebp)
+	movb	$7, -11(%ebp)
+	movl	-4(%ebp), %eax
+	cmpl	-8(%ebp), %eax
+	setl	%al					;setze al (Byte von eax) auf 1, wenn true
+	movb	%al, -9(%ebp)		;speichere das Ergebnis nach x
+	movl	$0, %eax
+.LBE6:
+.LBE5:
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	{
+		short	q = 1;
+		char	xy = 2;
+		int		a = 3, b = 4, c = 5, d = 6;
+
+		{
+			long	a = 7, p = 8;
+			int		d = 9, e = 10;
+
+			{
+				char	x = 11, y = 12;
+
+				a = xy * q;
+				x = a * q;
+			}
+
+			long	w = 13, z = 14;
+		}
+
+		long	p = 15, z = 16;
+	}
+
+	return EXIT_SUCCESS;
+}
+
+	movw	$1, -2(%ebp)		;short q
+	movb	$2, -3(%ebp)		;char xy
+	movl	$3, -8(%ebp)		;int a
+	movl	$4, -12(%ebp)		;int b
+	movl	$5, -16(%ebp)		;int c
+	movl	$6, -20(%ebp)		;int d
+
+Offenbar wird für jeden Block am Blockanfang ein Sprungziel ausgegeben.
+
+.LBB8:
+	movl	$7, -24(%ebp)		;long a
+	movl	$8, -28(%ebp)		;long p
+	movl	$9, -32(%ebp)		;int d
+	movl	$10, -36(%ebp)		;int e
+.LBB9:
+	movb	$11, -37(%ebp)		;char x
+	movb	$12, -38(%ebp)		;char y
+
+	movsbl	-3(%ebp),%edx		;xy nach edx
+	movswl	-2(%ebp),%eax		;q nach eax
+	imull	%edx, %eax			;Integer-Multiplikation
+	movl	%eax, -24(%ebp)		;speichern in a
+
+	movswl	-2(%ebp),%eax		;q nach eax
+	imull	-24(%ebp), %eax		;Integer-Multiplikation mit a
+	movb	%al, -37(%ebp)		;speichern in x
+
+Offenbar wird für jeden Block auch am Blockende ein Sprungziel ausgegeben.
+
+.LBE9:
+	movl	$13, -44(%ebp)		;long w
+	movl	$14, -48(%ebp)		;long z
+.LBE8:
+	movl	$15, -48(%ebp)		;long p
+	movl	$16, -36(%ebp)		;long z
+.LBE7:
+	movl	$0, %eax
+.LBE6:
+.LBE5:
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+
+Dieses Beispiel demonstriert, dass gcc auf dem Stack temp. Variablen für das Auswerten
+von expressions verwendet, hier -36(%ebp).
+
+int main( int argc, char *argv[] )
+{
+	bool	test;
+	int		a = 1, b = 2, c = 3, d = 4, e = 5, f = 6;
+
+	test = ( a && b || c & d | !e ) >> f;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -8(%ebp)		;int a
+	movl	$2, -12(%ebp)		;int b
+	movl	$3, -16(%ebp)		;int c
+	movl	$4, -20(%ebp)		;int d
+	movl	$5, -24(%ebp)		;int e
+	movl	$6, -28(%ebp)		;int f
+
+keine Ahnung!
+	movl	$0, -32(%ebp)
+	cmpl	$0, -8(%ebp)
+	je		.L13
+	cmpl	$0, -12(%ebp)
+	jne		.L12
+.L13:
+	movl	-20(%ebp), %eax		;lade d nach eax
+	movl	-16(%ebp), %edx		;lade c nach edx
+	andl	%eax, %edx			;c & d
+	movl	%edx, -36(%ebp)		;speichere in temporäre Variable
+	cmpl	$0, -24(%ebp)		;!e
+	jne		.L14				;
+	movl	-36(%ebp), %eax		;Ergebnis von c & d
+	orl		$1, %eax			; c & d | !e
+	testl	%eax, %eax
+	jne		.L12				;false
+	jmp		.L11				;true
+.L14:
+	cmpl	$0, -36(%ebp)		;Ergebnis von c & d
+	jne		.L12				;false
+	jmp		.L11				;true
+.L12:
+	movl	$1, -32(%ebp)
+.L11:
+	movl	-28(%ebp), %ecx		;lade f nach ecx
+	movl	-32(%ebp), %eax
+	sarl	%cl, %eax			;arithmetic right shift
+	testl	%eax, %eax
+	setne	%al
+	movb	%al, -1(%ebp)
+	movl	$0, %eax			;EXIT_SUCCESS
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int	a = 1, b = 2, c = 1;
+
+	if( a * b )
+		a++;
+
+	else
+		b++;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)		;a
+	movl	$2, -8(%ebp)		;b
+	movl	$1, -12(%ebp)		;c
+	movl	-4(%ebp), %eax
+	imull	-8(%ebp), %eax		;a*b
+	testl	%eax, %eax
+	je		.L11				;true
+	leal	-4(%ebp), %eax		;lädt die Adresse von a
+	incl	(%eax)				;a++
+	jmp		.L12
+.L11:
+	leal	-8(%ebp), %eax		;lädt die Adresse von b
+	incl	(%eax)				;b++
+.L12:
+	movl	$0, %eax			;EXIT_SUCCESS
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int		a = 1, b = 2;
+	bool	c;
+
+	c = a * b;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)		;a
+	movl	$2, -8(%ebp)		;b
+	movl	-4(%ebp), %eax
+	imull	-8(%ebp), %eax		;a*b
+	testl	%eax, %eax
+	setne	%al					;false
+	movb	%al, -9(%ebp)
+	movl	$0, %eax
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int		a = 1, b = 2;
+	bool	c;
+
+	c = a < b;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)		;a
+	movl	$2, -8(%ebp)		;b
+	movl	-4(%ebp), %eax
+	cmpl	-8(%ebp), %eax		;a<b
+	setl	%al					;wie scc.b eax
+	movb	%al, -9(%ebp)		;Zuweisung an c
+	movl	$0, %eax
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int		a = 1, b = 2, c;
+
+	c = a * b;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)		;a
+	movl	$2, -8(%ebp)		;b
+	movl	-4(%ebp), %eax
+	cmpl	-8(%ebp), %eax		;a<b
+	setl	%al					;scc.b eax
+	andl	$255, %eax			;Casting auf 32 Bit
+	movl	%eax, -12(%ebp)		;Zuweisung an c
+	movl	$0, %eax
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int		a = 1, b = 2;
+	bool	c;
+
+	c = a << b;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)		;a
+	movl	$2, -8(%ebp)		;b
+	movl	-8(%ebp), %ecx		;lade b nach ecx
+	movl	-4(%ebp), %eax		:lade a nach eax
+	sall	%cl, %eax			;a << b (bei sal (shift arithmtic left) gilt also nur das Byte von ecx)
+	testl	%eax, %eax			;prüfe auf true/false
+	setne	%al					;al entsprechend setzen
+	movb	%al, -9(%ebp)		;zuweisen an c
+	movl	$0, %eax
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int		a = 1, b = 2;
+	bool	c;
+
+	c = a && b;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)	;a
+	movl	$2, -8(%ebp)	;b
+	movb	$0, -9(%ebp)	;c=0 (setze c auf false)
+	cmpl	$0, -4(%ebp)	;a == false
+	je		.L11			;a ist false
+	cmpl	$0, -8(%ebp)	;b == false
+	je		.L11			;b ist false
+	movb	$1, -9(%ebp)	;c=true
+.L11:
+	movl	$0, %eax		;EXIT_SUCCES
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int		a = 1, b = 2, c = 3;
+	bool	d;
+
+	d = ( a < b ) || c;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)	;a
+	movl	$2, -8(%ebp)	;b
+	movl	$3, -12(%ebp)	;c
+	movb	$0, -13(%ebp)	;d = false
+	movl	-4(%ebp), %eax	;a
+	cmpl	-8(%ebp), %eax	;a<b
+	jl		.L12			;less
+	cmpl	$0, -12(%ebp)	;c==false?
+	jne		.L12			;nein, c ist true
+	jmp		.L11			;beide false, also d=false
+.L12:
+	movb	$1, -13(%ebp)	;d=true
+.L11:
+	movl	$0, %eax
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int		a = 1, b = 2, c = 3, d = 4;
+
+	a = ( ( b = c ) < d );
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)		;a
+	movl	$2, -8(%ebp)		;b
+	movl	$3, -12(%ebp)		;c
+	movl	$4, -16(%ebp)		;d
+	movl	-12(%ebp), %eax		;lade c nach eax
+	movl	%eax, -8(%ebp)		;speichere c in b
+	cmpl	-16(%ebp), %eax		;d und c vergleichen
+	setl	%al					;set less (setzen wenn kleiner)
+	andl	$255, %eax			;auf 32 Bit erweitern
+	movl	%eax, -4(%ebp)		;speichern in a
+	movl	$0, %eax			;EXIT_SUCCESS
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int		a = 1, b = 2, c = 3, d = 4;
+	bool	e;
+
+	e = a || b;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)	;a
+	movl	$2, -8(%ebp)	;b
+	movl	$3, -12(%ebp)	;c
+	movl	$4, -16(%ebp)	;d
+	movb	$0, -17(%ebp)	;setze e auf false
+	cmpl	$0, -4(%ebp)	;a false?
+	jne		.L12			;nein, true
+	cmpl	$0, -8(%ebp)	;b false?
+	jne		.L12			;nein, true
+	jmp		.L11			;false
+.L12:
+	movb	$1, -17(%ebp)	;setze e auf true
+.L11:
+	movl	$0, %eax		;EXIT_SUCCESS
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int		a = 1, b = 2, c = 3, d = 4;
+	bool	e;
+
+	e = a < b;
+
+	if( e == true )
+		e++;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)	;a
+	movl	$2, -8(%ebp)	;b
+	movl	$3, -12(%ebp)	;c
+	movl	$4, -16(%ebp)	;d
+	movl	-4(%ebp), %eax	;a nach eax
+	cmpl	-8(%ebp), %eax	;a < b
+	setl	%al				;setzte unteres Byte von eax, wenn true
+	movb	%al, -17(%ebp)	;schreibe Ergebnis nach e
+	movl	$0, %eax		;caste eax auf long
+	movb	-17(%ebp), %al
+	cmpl	$1, %eax		;1=true
+	jne		.L11			;nein, ist false
+	movb	$1, -17(%ebp)	;true nach e
+.L11:
+	movl	$0, %eax		;EXIT_SUCCESS
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int		a = 1, b = 2, c = 3, d = 4;
+	bool	e;
+
+	e = !a;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)	;a
+	movl	$2, -8(%ebp)	;b
+	movl	$3, -12(%ebp)	;c
+	movl	$4, -16(%ebp)	;d
+	cmpl	$0, -4(%ebp)		;a=0?
+	sete	%al					;wenn ja, setze Byte von eax auf 1
+	movb	%al, -17(%ebp)		;schreibe nach e
+	movl	$0, %eax			;EXIT_SUCCESS
+	leave
+	ret
+
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int		a = 1, b = 2, c = 3, d = 4;
+	bool	e;
+
+	e = ~a;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)	;a
+	movl	$2, -8(%ebp)	;b
+	movl	$3, -12(%ebp)	;c
+	movl	$4, -16(%ebp)	;d
+	movl	-4(%ebp), %eax	;a nach eax
+	notl	%eax			;not
+	testl	%eax, %eax		;condition codes setzen
+	setne	%al				;setzen, wenn N-Flag gesetzt
+	movb	%al, -17(%ebp)	;nach e
+	movl	$0, %eax		;EXIT_SUCCESS
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	unsigned int		a = 1, b = 2, c = 3, d = 4;
+	bool	e;
+
+	while( a == b )
+		b *= 2;
+
+	return EXIT_SUCCESS;
+}
+
+	movl	$1, -4(%ebp)		;a
+	movl	$2, -8(%ebp)		;b
+	movl	$3, -12(%ebp)		;c
+	movl	$4, -16(%ebp)		;d
+.L11:
+	movl	-4(%ebp), %eax		;a nach eax
+	cmpl	-8(%ebp), %eax		;a == b?
+	jne		.L12				;false
+	movl	-8(%ebp), %eax		;stmt-Teil ausführen
+	addl	%eax, %eax
+	movl	%eax, -8(%ebp)
+	jmp		.L11				;wieder den expr-Teil prüfen
+.L12:
+	movl	$0, %eax
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int	a, b;
+
+	do
+	{
+		a = 10;
+		b = a + b;
+
+	}while( a < b );
+
+	return EXIT_SUCCESS;
+}
+
+.L11:
+	movl	$10, -4(%ebp)	;schreibe 10 nach a
+	movl	-4(%ebp), %eax	;lade a in eax
+	leal	-8(%ebp), %edx	;Adresse von b
+	addl	%eax, (%edx)	;a zu b addieren (indirekt)
+	movl	-4(%ebp), %eax	;lade a nach eax
+	cmpl	-8(%ebp), %eax	;a < b
+	jge		.L12			;greater equal, d.h. false
+	jmp		.L11			;den Schleifenteil ausführen
+.L12:
+	movl	$0, %eax		;EXIT_SUCCESS
+	leave
+	ret
+
+----------------------------------------------------------------------------------------------------------------------
+
+int main( int argc, char *argv[] )
+{
+	int	a = 5, b = 7;
+
+	a = dummy( a, true );
+
+	return EXIT_SUCCESS;
+}
+
+int dummy( int a, char p )
+{
+	a = 10;
+	p = 5;
+
+	return( a );
+}
+
+	movl	$5, -4(%ebp)		;a
+	movl	$7, -8(%ebp)		;b
+	subl	$8, %esp			;Speicher auf dem Stack für zwei Parameter (int + char)
+Wieso ist char=32 Bits?
+	pushl	$1					;1=true auf dem Stack
+	pushl	-4(%ebp)			;a auf dem Stack
+	call	_Z5dummyic			;rufe dummy auf
+	addl	$16, %esp			;Stack korrigieren (Parameter + Rücksprungadresse)
+	movl	%eax, -4(%ebp)
+	movl	$0, %eax			;EXIT_SUCCESS
+	leave
+	ret
+
+_Z5dummyic:
+	pushl	%ebp				;Stackpointer auf dem Stack retten
+	movl	%esp, %ebp			;neuen Stackpointer setzen
+	subl	$4, %esp
+	movl	12(%ebp), %eax
+	movb	%al, -1(%ebp)
+	movl	$10, 8(%ebp)		;a=10
+	movb	$5, -1(%ebp)		;p=5
+	movl	8(%ebp), %eax		;a nach eax=Rückgabe
+	leave
+	ret

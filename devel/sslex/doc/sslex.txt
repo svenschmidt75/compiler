@@ -1,0 +1,448 @@
+SSLEX V0.5a - Ein Scanner-Generator
+(c) 2003-2005 by Sven Schmidt
+s.schmidt@lboro.ac.uk
+
+Last modified: 30.01.2005
+
+
+I. Einleitung
+-------------
+
+Schon früh wollte ich neben einem LR-Parser-Generator wie YACC auch einen
+Scanner-Generator wie LEX schreiben. Im Grunde ist wohl jeder mit flex besser
+bedient, denn SSLEX erzeugt die ganzen Datenstrukturen, wie in [1]
+beschrieben,ziemlich stur und wenig performant. SSLEX erzeugt dabei recht große
+Datenstrukturen, weil es mir nicht so sehr darum ging, einen noch schnelleren
+Scanner-Generator zu schreiben (flex ist um Längen schneller als SSLEX), sondern
+darum, die einzelnen Konstruktionsschritte zu verstehen und dann auf den Computer
+zu übertragen.
+Kleine Bemerkung: Wenn flex seine eigene Spezifikation übersetzt, werden ca. 30
+DEA-Zustände mehr erzeugt gegenüber SSLEX (hoffentlich ist das kein
+Bug in SSLEX :-)).
+
+Im übrigen verwendet SSLEX einen von SSLR (mein oben erwähnter
+LR-Parser-Generator) erzeugten Parser. Dazu habe ich die flex-Grammatik-Datei an
+die Bedürfnisse von SSLEX angepasst. Außerdem benutzt SSLEX nun einen von sich
+selbst erzeugten Scanner!
+
+
+Um das Zusammenspiel von SSLR und SSLEX zu verstehen, habe ich das Projekt
+"SimpleCalc" geschrieben, welches einen simplen Rechner implementiert.
+
+
+
+II. Beschreibung
+----------------
+
+SSLEX erzeugt aus einer Spezifikationsdatei eine C++-Klasse sowie ein
+Header-File. Es handelt sich dabei um einen tabellengesteuerten Scanner.
+Die Dateien heissen sslexclass.cpp und sslexclass.h. Die erzeugte Klasse lässt
+sich durch SSLEXScanner ansprechen. Die zu erkennenden Muster sind in Form von
+regulären Ausdrücken anzugeben. Hat der Scanner ein Muster erkannt, so wird eine
+zugehörige Aktion ausgeführt.
+
+
+
+III. Format der Spezifikation
+-----------------------------
+
+Sehen Sie sich zuerst folgende Beispiel-Eingabe an:
+
+%include
+\{
+	//Defines etc.
+
+	/*
+		Es werden die Variablen wordCount und charCount benutzt.
+		Dazu wird vom Scanner die Methode void init( void ); aufgerufen, wenn
+		hier das Makro SSLEX_INIT definiert wird.
+	*/
+	#define SSLEX_INIT
+
+\}
+
+
+%definition
+
+%x INITIAL
+
+
+delim	[ \t\n]
+ws		{delim}+
+digit	[0-9]
+number	{digit}+(\.{digit}+)?(E[+\-]?{digit}+)?
+word	[^ \t\n]+
+
+	//zählt die Wörter
+	int	wordCount;
+
+	//zählt die Zeichen
+	int	charCount;
+
+%specification
+
+
+{ws}	;
+
+
+{number}	attributeStr->f = atof( yyText );	return( ZAHL );
+
+";"			return( SEMIKOLON );
+
+"-"			return( SUB );
+
+"+"			return( ADD );
+
+"*"			return( MUL );
+
+"/"			return( DIV );
+
+\0			return( ACCEPT );
+
+"("			return( KLOPEN );
+
+")"			return( KLCLOSE);
+
+
+
+
+%extension
+\{
+	//Hilfsroutinen, werden in das cpp-File übernommen
+
+void SSLEXScanner::init( void )
+{
+	//initialisieren der benutzer-definierten Variablen
+	wordCount = charCount = 0;
+}
+
+void SSLEXScanner::deinit( void )
+{
+	//uninitialisieren der benutzer-definierten Variablen
+}
+
+\}
+
+
+Zuerst kann man mittels %include Anweisungen in das cpp-File übernehmen. Dies
+dient z.B. dem Einfügen von #define etc. Im Abschnitt nach %definition können sie
+häufig auftauchende reg. Ausdrücke einen Namen NAME zuweisen, den Sie dann
+im Regel-Teil mit {NAME} ansprechen können. Im obigen Beispiel steht {word} für
+[^ \t\n]+. Der Name muss mit einem Buchstaben oder _ beginnen. Weiterhin kann man
+mittels %x bzw. %s Start-Conditionen definieren. Dazu später mehr.
+
+Der Regel-Teil wird mittels %specification eingeleitet.
+Eine Regel wird also wie oben beschrieben angegeben: reg. Ausdruck, gefolgt von
+einer Aktion. Aktion MUSS dabei in {} stehen, wenn sie sich über mehrere Zeilen
+erstreckt.
+Wichtig: Das Zeichen { muss in der Zeile des reg. Ausdrucks stehen.
+Schließlich kann ein %extension folgen, mit dem man Hilfsroutinen im erzeugten
+cpp-Scanner-File übernehmen kann.
+
+
+IV. Reguläre Ausdrücke
+----------------------
+
+Die Syntax und Bedeutung der von SSLEX verstandenen regulären Ausdrücke richtet
+sich an die von flex.
+'x'					erkennt das Zeichen 'x'
+'.'					steht für ein beliebiges Zeichen, außer \n
+'[xyz]'				eines der Zeichen x, y oder z
+'[abj-oZ]'			eines der Zeichen a, b oder eines von j bis o, oder Z
+'[^A-Z]'			eine negierte Zeichenklasse; erkennt alle Zeichen bis auf
+					Großbuchstaben
+'[^A-Z\n]'			ein Zeichen, außer Großbuchstaben und \n
+'r*'				das beliebige Auftauchen des reg. Ausdrucks r (also auch nullmal)
+'r+'				der reg. Ausdruck r muss mind. einmal auftreten
+'r?'				der reg. Ausdruck r kann höchstens einmal auftreten (optional)
+'r{2,5}'			der reg. Ausdruck r zwischen 2- und 5-mal
+'r{2,}'				der reg. Ausdruck z mind. 2-mal
+'r{4}'				der reg. Ausdruck r genau 4-mal
+'{name}'			im %definition-Teil wurde einem reg. Ausdruck der Name name zugewiesen.
+					Durch {name} wird er im %specification-Teil angesprochen.
+"[xyz]\"foo"'		erkennt den String [xyz]"foo.
+					Meta-Symbole wie ., ^, ", - etc. müssen in Anführungszeichen stehen, wenn
+					sie als normale Zeichen erkannt werden sollen.
+'\x'				das Zeichen 'x', außer bei den Steuerzeichen \n, \v, \b, \t, \r
+'\0'				das NUL-Zeichen (ASCII code 0)
+'\123'				das Zeichen mit dem oktalen Wert 123
+'\x2a'				das Zeichen mit dem hex. Wert 2a
+'(r)'				der reg. Ausdruck r, jedoch in Klammer (Vorrang)
+'rs'				der reg. Ausdruck r, gefolgt von dem reg. Ausdruck s
+'r|s'				der reg. Ausdruck r oder s
+'r/s'				der reg. Ausdruck r, jedoch nur, wenn dieser von dem reg. Ausdruck s
+					gefolgt wird.
+					Bemerkung: Anders als bei flex darf der reg. Ausdruck s bieliebig lang
+					sein.
+'^r'				der reg. Ausdruck r, jedoch nur am Zeilenanfang
+					(also am Beginn des Scans oder nachdem ein \n erkannt wurde)
+'r$'				der reg. Ausdruck r, jedoch nur am Zeilenende
+					(entspricht 'r/\n')
+'<s>r'				der reg. Ausdruck r, jedoch nur in Start-Condition s (s. VII)
+'<<EOF>>'			diese Regel wird am Ende des zu scannenden Textes ausgeführt
+'<s1,s2><<EOF>>'	dito, jedoch nur in Start-Condition s1 und s2
+
+
+
+Es gelten dieselben Steuerzeichen wie es bei flex der Fall ist. Schauen Sie
+bitte dort nach.
+Anmerkung:
+
+1. SSLEX kennt die Zeichenklassen
+[:alnum:], [:alpha:], [:blank:],
+[:cntrl:], [:digit:], [:graph:],
+[:lower:], [:print:], [:punct:],
+[:space:], [:upper:], [:xdigit:], genau wie flex.
+
+
+2. Wenn der Lookahead-Operator benutzt wird, dann achten Sie bitte auf Folgendes:
+
+[abc]+/a	;
+
+Hier darf also eines der Zeichen a, b oder c mind. einmal stehen, gefolgt von
+einem a. Nun weiß der Scanner nicht, ob das zweite a schon zum Lookahead gehört,
+oder aber noch zum ersten Teil [abc]+! Vermeiden Sie solche Angaben.
+
+
+
+
+3. Eine Regel kann höchstens einen trailing context (Lookahead-Operator) haben
+(Zeichen / bzw. $). Treten diese mehrfach auf, wird eine Fehlermeldung
+ausgegeben. Die Zeichen ^ (Regel nur am Zeilenanfang) und <<EOF>> dürfen nur als
+erstes in einer Regel auftauchen.
+
+
+
+V. So wird die Eingabe gescannt
+-------------------------------
+
+Es wird immer soviel Text wie möglich erkannt. Bitte achten Sie darauf, dass
+SSLEX immer die erste Regel auswählt, falls mehrere passen (Konflikte lassen sich
+mit der Option -s anzeigen, s. Abschnitt XI).Nach erfolgreichem Scan wird das erkannte
+Muster in der Variablen yyText abgespeichert, dessen Länge in yyLeng. Wird keine Regel
+erkannt, so wird eine Fehlermeldung ausgegeben.
+yyText wird mit 8KB Größe initialisiert. Sollte dies mal nicht genügen (bei
+intensiver Benutzung von yyMore(); z.B.), so wird die Größe automatisch den
+Erfodernissen angepasst.
+
+Im Regelteil dürfen Kommentare im C++-Style stehen, da der Lookahead-Operator nicht
+am Zeilenanfang stehen darf!
+C-Kommentare werden nicht als solche erkannt!
+
+
+
+VI. Aktionen
+------------
+
+Jede Regel hat eine Aktion, die nach erfolgreicher Erkennung des zugehörigen
+Musters ausgeführt wird.
+Das Muster endet dabei beim Auftreten des ersten Blanks (Leerzeichen müssen in
+Anführungszeichen stehen!). Erstreckt sich die auszuführende Aktion über mehrere
+Zeilen, so muss sie in {} stehen.
+Besteht eine Aktion nur aus dem Zeichen |, so bedeutet dies, dass die Aktion mit
+der der folgenden Regel übereinstimmt.
+Eine Reihe von speziellen Direktiven stehen dem Benutzer zur Auswahl:
+
+- ECHO;					Gibt yyText auf stdout (Standardausgabe) aus.
+- BEGIN( SC );			Wechselt in die Start-Condition SC.
+- yyMore();				Hängt das Muster der nächsten erkannten Regel an yyText an.
+- yyLess( n );			yyText wird auf n Zeichen verkürzt. Achten Sie darauf, dass
+						n < yyLeng gilt!
+- yyUnput( c );			Stellt das Zeichen c in den Eingabestrom. Es wird
+						also als nächstes Zeichen gelesen!
+- yyUnput( "st" );		Stellt einen ganzen String in den Eingabestrom zurück.
+- yyInput();			Liefert das nächste Eingabezeichen zurück.
+						Achtung: das Zeichen verschwindet aus der Eingabe und wird nicht
+						mehr vom Scanner gelesen!
+- yyStrCpy( yyText );	liefert eine Kopie des Strings yyText zurück. Diese Routine ist
+						im Aktions-Teil ganz nützlich.
+- yyTerminate();		Bricht den Scan-Vorgang ab.
+- YY_START;				gibt die aktuelle Start-Condition wieder (auch YYSTATE)
+
+
+
+VI. Der erzeugte Scanner
+------------------------
+
+Zuerst erzeugen Sie eine Instanz der Klasse SSLEXScanner. Dabei übergeben Sie
+dem Konstruktor einen Zeiger auf den zu scannenden Text sowie dessen Länge. Dies
+kann z.B. wie folgt geschehen:
+
+	SSLEXScanner	*s = new SSLEXScanner( char *data, ulong size );
+
+Um den Erkennungs-Prozess zu starten, rufen Sie die Methode yyLex auf:
+
+	int s->yyLex( SSLR_TYPE *attributeStr );
+
+Damit der Scanner Attribute wie Zahlenwerte oder Indices in Symboltabellen an
+den Aufrufer zurückliefern kann, übergibt man der Routine einen Zeiger auf eine
+Struktur vom Typ SSLR_TYPE. Diese wird z.B. vom Parser-Generator SSLR geliefert
+und entspricht der %union-Angabe in dem Grammatik-File. In den Aktionen zu den
+jeweiligen Regeln kann auf diese Struktur dann über die Variable attributeStr
+zugegriffen werden. Standardmäßig wird attributeStr auf NULL gesetzt.
+Diese kann z.B. wie folgt aussehen:
+
+//Type for semantic actions
+typedef union
+{
+	int		i;
+	float	f;
+	bool	b;
+
+}SSLR_TYPE;
+
+
+Der Scanner liefert nun, je nach Aktion, einen int-Wert zurück, der Aufschluss
+über das erkannte Muster gibt.
+
+
+Falls Sie die Debug-Version des Scanner-Files erzeugt haben (Option -d, s. Abschnitt XI), so ist im
+Header-File ein Makro "SSLEX_DEBUG" definiert.
+Falls Sie die Debug-Meldungen ausschalten wollen, so schreiben Sie "#undef SSLEX_DEBUG" unmittelbar
+nach der Makro-Definition.
+
+
+
+VII. Start-Conditionen
+----------------------
+
+Im Abschnitt %definition können Sie mittels %x bzw. %s Start-Conditionen
+definieren. Jede Start-Condition bildet dabei zusammen mit ihren Regeln einen
+eigenen Scanner. Sehen Sie bitte in [6] nach.
+Mit %x sagen Sie SSLEX, dass eine Regel ohne Angabe von Start-Conditionen nicht
+eingetragen werden soll, wohingegen dies bei %s sehr wohl der Fall sein soll.
+Die Start-Condition INITIAL wird von SSLEX automatisch installiert (mit %s).
+
+Sie können eine Regel auch mit mehreren Start-Conditionen verbinden durch
+
+<SC1, SC2, SC3>{
+
+Regel	Aktion
+}
+
+WICHTIG: Das Zeichen { MUSS unmittelbar nach > stehen!
+Geben Sie als Start-Condition <*> an, so wird die Regel in ALLE
+Start-Conditionen eingetragen.
+Mit BEGIN( SC1 ); können Sie im Aktionsteil in die Start-Condition SC1 wechseln.
+
+Weiterhin stehen dem Benutzter die folgenden Methoden zur Verfügung:
+
+	void yyPushState( ulong newState );		Legt die Start-Condition newState auf den
+											Start-Condition-Stack und aktiviert sie.
+
+	void yyPopState( void );				Nimmt die oberste Start-Condition vom Stack und
+											aktiviert sie.
+
+	ulong yyTopState( void );				Liefert die oberste Start-Condition zurück,
+											aktiviert sie aber nicht.
+
+Der Start-Conditionen-Stack wird bei Bedarf automatisch vergrößert.
+
+Im Aktionsteil kann man auf die Start-Conditionen über ihre Namen zugreifen, z.B.
+
+	sc = INITIAL;
+Es handelt sich um int-Werte.
+Auf die aktuelle Start-Condition kann man über das Makro YY_START (auch YYSTATE) zugreifen.
+
+
+
+VIII. Benutzter-definierte Deklarationen
+----------------------------------------
+
+Sie haben die Möglichkeit, Variablen ins erzeugte Klassen-File zu übernehmen, um dann z.B. auf
+Routinen im Teil %extension auf sie zuzugreifen. Alle im %definition-Teil eingerückten
+Zeilen werden ins Klassenfile übernommen (s. Beispiel in Abschnitt II). Um diese zu
+initialisieren, definieren Sie bitte in %include das Makro SSLEX_INIT. Der Scanner ruft
+dann vor dem eigentlichen Scan-Vorgang die Routine void init( void ); auf, die
+Sie im %extension-Teil eintragen müssen. Sie wird vom Konstruktur automatisch aufgerufen!
+Um die Variablen zu deinitialisieren, müssen Sie im %extension-Teil die Routine
+void deinit( void ); definieren, die vom Destructor automatisch aufgerufen wird, wenn
+das Makro SSLEX_INIT in %include definiert wurde!
+
+
+
+IX. EOF-Regeln
+--------------
+
+EOF-Regeln, <<EOF>>, werden dann ausgeführt, wenn die Eingabe zu Ende ist. Man
+kann so z.B. das unvorhergesehende Ende der Eingabe abfangen und eine Mitteilung
+ausgeben. Pro Start-Condition ist nur eine <<EOF>>-Regel erlaubt. Wird keine
+angegeben, so wird eine Default-Regel genommen, die yyTerminate(); ausführt.
+
+
+
+X. Schnittstelle
+----------------
+
+SSLEX zählt automatisch die Zeilen. Allerdings nur, wenn es für \n eine Regel gibt.
+Mittels
+
+	//return line number
+	ulong getYYLineno( void );
+
+können Sie die aktuelle Zeile erfragen.
+Die Länge des erkannten Musters, also strlen( yyText ), liefert
+
+	//return length of yyText
+	ulong getYYLeng( void );
+
+zurück. Einen Zeiger auf das erkannte Muster yyText erhalten Sie durch Aufruf
+von
+	//return yyText
+	char *getYYText( void );
+
+Durch Aufruf von
+
+	//reset the whole scanner
+	void reset( void );
+
+wird der ganze Erkennungsprozess erneut gestartet. Der Scanner wird dabei intern
+zurückgesetzt. Achten Sie aber bitte darauf, dass Änderungen durch Aufruf von
+yyUnput NICHT berücksichtigt werden. In diesem Falle sollten Sie
+
+	//reset the whole scanner and give him new input
+	void reset( char *, ulong );
+
+aufrufen. Übergeben Sie dabei einen Zeiger auf den zu scannenden Text, sowie
+dessen Länge.
+
+
+
+
+XI. Optionen
+------------
+
+-s	Es werden Konflikte zwischen den Regeln ausgegeben.
+-d	Es wird eine Debug-Version des erzeugten Scanners erzeugt.
+-v	Es werden ausführliche Meldungen ausgegeben.
+-7	Es werden Tabellen erzeugt für die unteren 7-Bit des ASCII Codes;
+	dies entspricht 128 Einträgen pro Zustand!
+-8	Es werden Tabellen erzeugt für den ganzen ASCII Code, d.h.
+	pro Zustand werden 256 Einträge erzeugt!
+
+
+XI. Schlußwort
+--------------
+
+Beachten Sie bitte, dass es sich bei SSLEX um eine frühe Version handelt, die
+sicher voller Fehler ist. Wenn Sie Fragen oder Probleme haben, so scheuen Sie
+sich nicht, sich an mich zu wenden. Da ich KEIN Informatiker bin, ist sicher
+alles schrecklich unprofessionell gelöst. Haben Sie bitte Verständnis dafür,
+dass ich kein Super-Programmierer bin. Ich möchte aber unbedingt darum bitten,
+etwaige Verbesserungsvorschläge an mich zu senden, da ich sehr gerne dazu lerne.
+
+Meine eMail-Adresse lautet:
+s.schmidt@lboro.ac.uk
+
+
+
+XII. Literatur
+
+[1] Compilerbau, Alfrad V. Aho, Ravi Sethi, Jeffrey D. Ullmann, Oldenbourg, 1999, 2. Aufl.
+[2] S.C. Johnson, Yacc - Yet Another Compiler-Compiler, Comp. Sci. Tech. Rep. No. 32. Bell Laboratories,
+July 1975
+[3] Donnely and Stallmann. The Bison Manual
+[4] M.E. Lesk - A Lexical Analyzer Generator. Comp. Sci. Tech. Rep. No. 39. Bell Laboratories, October
+1975
+[5] Flex, A fast scanner generator, Edition 2.5
+[6] J.R. Levine, T. Mason, D. Brown, lex & yacc O'Reilly, 2nd. Edition 1990

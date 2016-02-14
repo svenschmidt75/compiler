@@ -1,0 +1,53 @@
+/*
+;Grammatik GAA_6.GRA in BNF-Form
+;Generiert von LR-Parser-Generator V0.00ž
+;(C) by Sven Schmidt
+*/
+
+%grammar
+
+
+program
+		->	 'BOPEN' stmt_list 'BCLOSE'
+		;
+
+stmt_list
+		->	 stmt
+		|	 stmt_list stmt
+		;
+
+stmt
+		->	 'IDENT' 'EQU' expr 'SEMI'
+		|	 'PRINT' expr 'SEMI'
+		|	 expr 'SEMI'
+		|	 'WHILE' expr stmt
+		|	 'DO' 'BOPEN' stmt_list 'BCLOSE' 'WHILE' expr
+		|	 'IF' expr stmt 'ELSE' stmt
+		|	 'IF' expr stmt
+		|	 'BOPEN' stmt_list 'BCLOSE'
+		;
+
+expr
+		->	 'KLOPEN' expr 'LESS' expr 'KLCLOSE'
+		|	 'KLOPEN' expr 'GREATER' expr 'KLCLOSE'
+		|	 'KLOPEN' expr 'LESS_EQU' expr 'KLCLOSE'
+		|	 'KLOPEN' expr 'GREATER_EQU' expr 'KLCLOSE'
+		|	 'KLOPEN' expr 'EQUEQU' expr 'KLCLOSE'
+		|	 'KLOPEN' expr 'NOTEQU' expr 'KLCLOSE'
+		|	 expr 'ADD' term
+		|	 expr 'SUB' term
+		|	 term
+		;
+
+term
+		->	 term 'MUL' factor
+		|	 term 'DIV' factor
+		|	 term 'MOD' factor
+		|	 factor
+		;
+
+factor
+		->	 'KLOPEN' expr 'KLCLOSE'
+		|	 'NUMBER'
+		|	 'ID'
+		;

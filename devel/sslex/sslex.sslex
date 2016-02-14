@@ -1,0 +1,1075 @@
+/*
+    Scanner-Spezifikation für das Projekt SSLEX, einem einfachen Scanner-Generator.
+    (c) 2003-2005 by Sven Schmidt
+    s.schmidt@lboro.ac.uk
+
+    Last modified: 21.04.2005
+*/
+
+//Kommentar
+
+%include
+\{
+    //initialize user defined variables
+    #define SSLEX_INIT
+
+    //für das Lesen der reg. Ausdrücke in Text-Form
+    #define SCAN_REG_TXT    1024
+
+
+\}
+
+
+%definition
+
+%x SECT2 CODEBLOCK PICKUPDEF SC CARETISBOL NUM QUOTE
+%x FIRSTCCL CCL ACTION COMMENT ACTION_STRING
+%x LINEDIR ACTION_COMMENT SC_INCLUDE
+
+WS          [[:blank:]]+
+OPTWS       [[:blank:]]*
+NOT_WS      [^[:blank:]\n]
+
+NL          \r?\n
+
+NAME        ([[:alpha:]_][[:alnum:]_-]*)
+NOT_NAME    [^[:alpha:]_*\n]+
+
+SCNAME      {NAME}
+
+ESCSEQ      (\\([^\n]|[0-7]{1,3}|x[[:xdigit:]]{1,2}))
+
+FIRST_CCL_CHAR  ([^\\\n]|{ESCSEQ})
+CCL_CHAR    ([^\\\n\]]|{ESCSEQ})
+CCL_EXPR    ("[:"[[:alpha:]]+":]")
+
+
+
+    //Kommantar scannen
+    bool        cComment;
+
+    /*
+        In genau diesem Abschnitt werden Variablen definiert, die in das erzeugte Header-File
+        des generierten Scanners aufgenommen werden sollen.
+    */
+    ulong       userDefHeaderAnz;
+    char        **userDefHeader;
+
+    //für Defines etc.
+    char        *incl;
+
+    //temporär
+    char        *tmpStr;
+
+    //für die Erkennung von reg. Ausdrücken, die ber Namen angesprochen werden können
+    bool        regExpDef;
+
+    //beinhaltet name-definitions
+    NAME_NEA    *nameNeaStr;
+    int         nameNeaAnz;
+
+    //Klammer-Tiefe bei Kommentaren
+    int         bracelevel;
+
+    //Aktionen, die mit einer Regel verbunden sind
+    char        **actionStr;
+    int         actionAnz;
+    int         actionMax;
+
+    //erkenne eine Aktion
+    bool        scanAction;
+
+    //für eigene Erweiterungen
+    char        *extension;
+
+    //reg. Ausdrücke werden als Text gesichert
+    char        *scanRegTxt;
+    int         scanRegTxtLength;
+    int         regTextLine;
+
+    //Methoden
+
+    //Deklarationen in Header-File des erzeugten Scanners eintragen
+    void insertUserDefHeader( char * );
+
+    //eigene Variablen initialisieren
+    void init( void );
+
+    //eigene Variablen deinitialisieren
+    void deinit( void );
+
+    //%extension scannen
+    void scanExtension( void );
+
+    //einen reg. Ausdruck in Textform eintragen
+    void insertRegExpDef( char *, char * );
+
+    //einen NEA der Art {NAME} reg suchen
+    int findRegExp( char * );
+
+    //eine Escape-Sequenz verarbeiten
+    char getEsc( char * );
+
+    //eine Aktion zu einem reg. Ausdruck eintragen
+    void insertAction( char * );
+
+    //reg. Ausdruck als Text sichern
+    void appendScanRegTxt( char * );
+
+    public:
+
+    //prüft, ob alle reg. Ausdrücke in %definition auch benutzt wurden
+    void checkRegExp( void );
+
+    //liefere Aktionen zu einer Regel zurück
+    char **getAction( void );
+
+    //liefere den reg. Ausdruck als Text zurück
+    char *getScanRegTxt( ulong & );
+
+    //liefert die Aktionen zurück, die nach erfolgreichem Erkennen einer
+    //Regel ausgeführt werden sollen.
+    char **getAction( int & );
+
+    //%extension-Angaben liefern
+    char *getExtension( void );
+
+    //%include-Angaben liefern
+    char *getInclude( void );
+
+    //alle eingerückten Zeilen in %definition werden in das Header-File des erzeugten
+    //Scanners eingefügt. Dies nutzt man, um in den Aktion-Teilen benutzte Variablen
+    //zu deklarieren.
+    char** getUserDefHeader( int & );
+
+    private:
+
+
+%specification
+
+<INITIAL>{
+
+    ^"//".*     /* C++-Kommentar */
+
+    ^"/*"       {
+                    //scanne C-Kommentar
+                    cComment = true;
+
+                    //C-Kommentar scannen
+                    yyPushState( COMMENT );
+                }
+
+    ^{OPTWS}{NL}    /* allows blank lines in section 1 */
+
+    ^{WS}       {
+                    //user-defined Deklarationen zum Übernehmen in die erzeugte Klasse
+                    BEGIN( CODEBLOCK );
+                }
+
+    ^"%include".*       {
+                            //eigene Erweiterungen
+                            if( incl )
+                                //ist schon mal benutzt
+                                cerr << "sslex: line " << yyLineno << ": %include already occured!" << endl;
+
+                            else
+                                //den Include-Teil einfach einlesen
+                                BEGIN( SC_INCLUDE );
+                        }
+
+    ^"%definition".*    {
+                            //es beginnt der %definition-Teil
+                            return( DEF );
+                        }
+
+    ^"%specification".*{NL}*    {
+                                    //Regel-Teil
+                                    BEGIN( SECT2 );
+
+                                    //nicht im Aktion-Teil
+                                    scanAction = false;
+
+                                    //zurückliefern
+                                    return( SPEC );
+                                }
+
+    ^"%s"{NAME}?    /* inclusive start condition */ return( SCDECL );
+
+    ^"%x"{NAME}?    /* exclusive start condition */ return( XSCDECL );
+
+    {WS}        /* discard */
+
+    ^{NAME}     {
+                    /*
+                        Im %definition-Teil kann man reg. Ausdrücke, die man im Regel-Teil später
+                        häufig nutzt, einen Namen zuweisen, also z.b.
+                        NAME        ([[:alpha:]_][[:alnum:]_-]*)
+
+                        Dies wird hier erkannt.
+                    */
+                    tmpStr = yyStrCpy( yyText );
+
+                    //ist noch nicht komplett
+                    regExpDef = false;
+
+                    //zurückliefern
+                    BEGIN( PICKUPDEF );
+                }
+
+    {SCNAME}    {
+                    //Name einer SC
+                    attributeStr->name = yyStrCpy( yyText );
+                    return( NAME );
+                }
+
+    {OPTWS}{NL} /* maybe end of comment line */
+}
+
+<SC_INCLUDE>{
+//hier wird die %include-Anweisung gelesen
+
+    .       /* irgendein Zeichen, nicht \n */ yyMore();
+
+    {NL}    yyMore();
+
+    ^"\\}"  {
+                /* das Ende von %include ist erreicht */
+                char    *tmp = yyStrCpy( yyText );
+
+                //merken
+                incl = tmp;
+
+                //zurück zu INITIAL
+                BEGIN( INITIAL );
+            }
+
+    <<EOF>> {
+                //%include ist nicht korrekt abgeschlossen
+                cerr << "sslex: line " << yyLineno << ": Unexpected end of file in %include!" << endl;
+            }
+}
+
+<COMMENT>{
+    "*/"    {
+                //sind wir noch in der Analyse eines C-Kommentars?
+                if( cComment == true )
+                    //ja, die oberste SC entfernen
+                    yyPopState();
+            }
+
+    "*"         ;
+    [^*\n]+     ;
+    [^*\n]*{NL} ;
+}
+
+<CODEBLOCK>{
+    .+      {
+                /*
+                    Im %definition-Teil eingerückte Zeilen werden unverändert ins erzeugte
+                    Header-File des Scanners übernommen. Mit ihnen kann man z.b. im %extension-Teil
+                    benutzte Variablen oder Funktionen deklarieren.
+                */
+                insertUserDefHeader( yyText );
+            }
+
+    {NL}    {
+                //wird später ins Header-File eingetragen
+                insertUserDefHeader( yyText );
+
+                //nach dem Lesen einer Zeile (die ja mit {NL} endet), wieder in den normalen Modus
+                BEGIN(INITIAL);
+            }
+}
+
+
+<PICKUPDEF>{
+
+    {WS}        /* separates name and definition */
+
+    {NOT_WS}.*  {
+                    /*
+                        Im %definition-Teil kann man reg. Ausdrücke, die man im Regel-Teil später
+                        häufig nutzt, einen Namen zuweisen, also z.b.
+                        NAME        ([[:alpha:]_][[:alnum:]_-]*)
+
+                        Dies wird hier erkannt.
+                    */
+                    char    *tmp = yyStrCpy( yyText );
+
+                    //den Namen für den reg. Ausdruck eintragen
+                    insertRegExpDef( tmpStr, tmp );
+                    regExpDef = true;
+                }
+
+    {NL}        {
+                    //Ende der Definition
+                    if( regExpDef == false )
+                        //Fehler
+                        cerr << "sslex: line " << yyLineno << ": Incomplete name definition!" << endl;
+
+                    //wieder in den normalen Modus gehen
+                    BEGIN( INITIAL );
+            }
+}
+
+<SECT2>{
+
+    ^{OPTWS}"//".*      /* C++-Kommentar */
+
+    ^"%extension".*     {
+                            /*
+                                Im %extension-Teil kann man eigene Erweiterungen platzieren, die
+                                später unverändert ins erzeugte cpp-File des Scanners eingetragen
+                                werden, also z.b. Hilfsroutinen, etc.
+                            */
+                            if( extension )
+                                //%extension wurde mehrfach angegeben
+                                cerr << "sslex: line " << yyLineno << ": %extension already occured!" << endl;
+
+                            else
+                                //einlesen
+                                scanExtension();
+                        }
+
+    ^{OPTWS}{NL}    /* allow blank lines in section 2 */
+
+    ^{OPTWS}"<" BEGIN( SC );    /* Es folgt eine SC zur Regel */ return( SCOPEN );
+
+    ^{OPTWS}"^" appendScanRegTxt( "^" ); scanAction = true; return( BEGLINE );
+
+    \"      BEGIN( QUOTE ); appendScanRegTxt( yyText ); scanAction = true; return( SOPEN );
+
+    "{"/[[:digit:]] BEGIN( NUM ); appendScanRegTxt( yyText );  scanAction = true; return( BOPEN );
+
+    "$"/([[:blank:]]|{NL})  appendScanRegTxt( yyText ); scanAction = true; return( ENDLINE );
+
+    {WS}"|".*{NL}   regTextLine = yyLineno - 1; insertAction( yyStrCpy( "|" ) ); return( NEWLINE );
+
+    ^{WS}       /* allow indented rules */
+
+    {WS}        {
+            /* This rule is separate from the one below because
+             * otherwise we get variable trailing context, so
+             * we can't build the scanner using -{f,F}.
+             */
+            bracelevel = 0;
+            BEGIN( ACTION );
+
+            regTextLine = yyLineno;
+
+                scanAction = true;
+            }
+
+    {OPTWS}{NL} {
+
+                if( scanAction == true )
+                {
+                    //hierher wird gesprungen, wenn eine Regel ohne Aktionsteil angegeben wurde
+                    scanAction = false;
+                    regTextLine = yyLineno;
+                    return( NEWLINE );
+                }
+            }
+
+    ^{OPTWS}"<<EOF>>"   |
+    "<<EOF>>"   appendScanRegTxt( "<<EOF>>" ); scanAction = true; return( EOF_OP );
+
+    "["({FIRST_CCL_CHAR}|{CCL_EXPR})({CCL_CHAR}|{CCL_EXPR})*    {
+
+                yyLess( 1 );
+                appendScanRegTxt( "[" );
+                scanAction = true;
+                BEGIN( FIRSTCCL );
+                return( COPEN );
+            }
+
+    "{"{NAME}"}"    {
+                        //ein regulärer Ausdruck soll über seinen Namen angesprochen werden
+                        NAME_NEA    *nameNea;
+                        int         ret;
+
+                        //kopieren
+                        strcpy( yyText, yyText + 1 );
+                        yyText[yyLeng - 2] = 0;
+
+                        //wurde er überhaupt definiert?
+                        if( ( ret = findRegExp( yyText ) ) >= 0 )
+                        {
+                            //ja, merken
+                            nameNea = &nameNeaStr[ret];
+
+                            //wird benutzt
+                            nameNea->used = true;
+
+                            //in Eingabe zurücksetzen
+                            yyUnput( ')' );
+                            yyUnput( nameNea->text );
+                            yyUnput( '(' );
+                        }
+
+                        else
+                            //regulärer Ausdruck wurde im %definition-Teil nicht definiert
+                            cerr << "sslex: line " << yyLineno << ": Undefined definition " << yyText << "!" << endl;
+        }
+
+    "/"     appendScanRegTxt( yyText ); scanAction = true; return( LA );
+
+    "|"     appendScanRegTxt( yyText ); scanAction = true; return( OR );
+
+    "*"     appendScanRegTxt( yyText ); scanAction = true; return( MUL );
+
+    "?"     appendScanRegTxt( yyText ); scanAction = true; return( QUEST );
+
+    "+"     appendScanRegTxt( yyText ); scanAction = true; return( PLUS );
+
+    "."     appendScanRegTxt( yyText ); scanAction = true; return( ANY );
+
+    "("     appendScanRegTxt( yyText ); scanAction = true; return( KLOPEN );
+
+    ")"     appendScanRegTxt( yyText ); scanAction = true; return( KLCLOSE );
+
+    "{"     return( BOPEN );
+
+    "}"     return( BCLOSE );
+
+    .       appendScanRegTxt( yyText ); scanAction = true; attributeStr->character = yyText[0]; return( CHAR );
+
+}
+
+
+<SC>{
+
+    {WS}    /* Leerzeichen */
+
+    ","     return( KOMMA );
+
+    "*"     return( SCALL );
+
+    ">"     BEGIN( SECT2 ); return( SCCLOSE );
+
+    ">"/^       BEGIN( CARETISBOL ); return( SCCLOSE );
+
+    {SCNAME}    attributeStr->name = yyStrCpy( yyText ); return( NAME );
+
+    .       {
+                //Es folgte ANY, also einfach.
+                cerr << "sslex: line " << yyLineno << ": Bad <start condition>!" << endl;
+            }
+}
+
+<CARETISBOL>"^"     BEGIN( SECT2 ); return( BEGLINE );
+
+
+<QUOTE>{
+    [^"\n]      attributeStr->character = yyText[0]; appendScanRegTxt( yyText );return( CHAR );
+
+    \"      BEGIN( SECT2 ); appendScanRegTxt( yyText );return( SOPEN );
+
+    {NL}        {
+            cerr << "sslex: line " << yyLineno << ": Missing quote!" << endl;
+            BEGIN( SECT2 );
+            return( SOPEN );
+            }
+}
+
+
+<FIRSTCCL>{
+    "^"/[^-\]\n]    BEGIN(CCL); appendScanRegTxt( yyText ); return( NEGATE );
+    "^"/("-"|"]")   appendScanRegTxt( yyText ); return( NEGATE );
+    .       BEGIN( CCL ); attributeStr->character = yyText[0]; appendScanRegTxt( yyText ); return( CHAR );
+}
+
+<CCL>{
+    -/[^\]\n]   appendScanRegTxt( yyText ); return( MINUS );
+    [^\]\n]     attributeStr->character = yyText[0]; appendScanRegTxt( yyText ); return( CHAR );
+    "]"     BEGIN( SECT2 ); appendScanRegTxt( yyText ); return( CCLOSE );
+    .|{NL}      {
+            cerr << "sslex: line " << yyLineno << ": Bad character class!" << endl;
+            BEGIN( SECT2 );
+            return( CCLOSE );
+            }
+}
+
+<FIRSTCCL,CCL>{
+    "[:alnum:]" BEGIN( CCL ); appendScanRegTxt( yyText ); return CCE_ALNUM;
+    "[:alpha:]" BEGIN( CCL ); appendScanRegTxt( yyText ); return CCE_ALPHA;
+    "[:blank:]" BEGIN( CCL ); appendScanRegTxt( yyText ); return CCE_BLANK;
+    "[:cntrl:]" BEGIN( CCL ); appendScanRegTxt( yyText ); return CCE_CNTRL;
+    "[:digit:]" BEGIN( CCL ); appendScanRegTxt( yyText ); return CCE_DIGIT;
+    "[:graph:]" BEGIN( CCL ); appendScanRegTxt( yyText ); return CCE_GRAPH;
+    "[:lower:]" BEGIN( CCL ); appendScanRegTxt( yyText ); return CCE_LOWER;
+    "[:print:]" BEGIN( CCL ); appendScanRegTxt( yyText ); return CCE_PRINT;
+    "[:punct:]" BEGIN( CCL ); appendScanRegTxt( yyText ); return CCE_PUNCT;
+    "[:space:]" BEGIN( CCL ); appendScanRegTxt( yyText ); return CCE_SPACE;
+    "[:upper:]" BEGIN( CCL ); appendScanRegTxt( yyText ); return CCE_UPPER;
+    "[:xdigit:]"    BEGIN( CCL ); appendScanRegTxt( yyText ); return CCE_XDIGIT;
+
+    {CCL_EXPR}  {
+            cerr << "sslex: line " << yyLineno << ": Bad character class expression: " << yyText << "!" << endl;
+            BEGIN( CCL ); return CCE_ALNUM;
+            }
+}
+
+<NUM>{
+    [[:digit:]]+    {
+            attributeStr->i = atoi( yyText );
+            appendScanRegTxt( yyText );
+            return( NUMBER );
+            }
+
+    ","     appendScanRegTxt( yyText ); return( KOMMA );
+
+    "}"     appendScanRegTxt( yyText ); BEGIN( SECT2 ); return( BCLOSE );
+
+    .       {
+            cerr << "sslex: line " << yyLineno << ": Bad character inside {}'s!" << endl;
+            BEGIN( SECT2 );
+            return( BCLOSE );
+            }
+
+    {NL}        {
+            cerr << "sslex: line " << yyLineno << ": Missing }!" << endl;
+            BEGIN( SECT2 );
+            return( BCLOSE );
+            }
+}
+
+<ACTION>{
+    "/*"    insertAction( yyText ); yyPushState( ACTION_COMMENT );
+
+    "{"     insertAction( yyText ); ++bracelevel;
+    "}"     insertAction( yyText ); --bracelevel;
+
+    [^[:alpha:]_{}"'*/\n]+  insertAction( yyText );
+
+    {NAME}      insertAction( yyText );
+
+    "'"([^'\\\n]|\\.)*"'"   insertAction( yyText ); /* character constant */
+
+    \"      insertAction( yyText ); BEGIN( ACTION_STRING );
+
+    {NL}        {
+
+            if( scanAction == true )
+                insertAction( yyText );
+
+            if ( bracelevel == 0 )
+                {
+            insertAction( yyText );
+            scanAction = false;
+                BEGIN( SECT2 );
+
+                    return( NEWLINE );
+                }
+            }
+    .       insertAction( yyText );
+}
+
+<ACTION_STRING>{
+    [^"\\\n]+   insertAction( yyText );
+    \\.     insertAction( yyText );
+    {NL}        insertAction( yyText );
+    \"      insertAction( yyText ); BEGIN( ACTION );
+    .       insertAction( yyText );
+}
+
+<ACTION_COMMENT>{
+    "*/"        insertAction( yyText ); yyPopState();
+    "*"         insertAction( yyText );
+    [^*\n]+     insertAction( yyText );
+    [^*\n]*{NL} insertAction( yyText );
+}
+
+<COMMENT,ACTION,ACTION_STRING><<EOF>>   {
+            cerr << "sslex: line " << yyLineno << ": EOF encountered inside an action!" << endl;
+            yyTerminate();
+            }
+
+
+<SECT2,QUOTE,FIRSTCCL,CCL>{ESCSEQ}  {
+                                        //es folgt eine Escape-Sequenz
+                                        attributeStr->i = getEsc( yyText );
+                                        appendScanRegTxt( yyText );
+                                        if ( YY_START == FIRSTCCL )
+                                        BEGIN( CCL );
+                                        return( CHAR );
+                                    }
+
+
+
+%extension
+\{
+    //eigene Erweiterungen und Hilfsroutinen
+
+void SSLEXScanner::init( void )
+{
+    //initialize user defined variables
+    userDefHeader = 0L;
+    userDefHeaderAnz = 0;
+    incl = 0L;
+    nameNeaStr = 0L;
+    nameNeaAnz = 0;
+    actionStr = 0L;
+    actionAnz = 0;
+    actionMax = 0;
+    extension = 0L;
+
+    //Speicher für den reg. Ausdruck als Text
+    scanRegTxt = new( char[SCAN_REG_TXT] );
+    scanRegTxt[0] = 0;
+    scanRegTxtLength = SCAN_REG_TXT;
+}
+
+
+void SSLEXScanner::deinit( void )
+{
+    //deinitialize user defined variables
+    NAME_NEA    *nameNea;
+    int         i;
+
+    if( scanRegTxt )
+        delete[] ( scanRegTxt );
+
+    if( incl )
+        delete[] ( incl );
+
+    if( extension )
+        delete[] ( extension );
+
+
+    //name-definitions?
+    if( nameNeaStr )
+    {
+        //alle bisherigen Einträge
+        for( i = 0; i < nameNeaAnz; i++ )
+        {
+            //Zeiger
+            nameNea = &nameNeaStr[i];
+
+            //Speicher freigeben
+            delete[] ( nameNea->name );
+            delete[] ( nameNea->text );
+        }
+
+        //freigeben
+        delete[] ( nameNeaStr );
+    }
+
+    //user-def. Header-Angaben freigeben?
+    if( userDefHeader )
+    {
+        //alle Zeilen
+        for( i = 0; i < userDefHeaderAnz; i++ )
+            delete[] ( userDefHeader[i] );
+
+        delete[] ( userDefHeader );
+    }
+}
+
+
+void SSLEXScanner::insertUserDefHeader( char *str )
+{
+    /*
+        alle eingerückten Zeilen in %definition werden in das Header-File des erzeugten
+        Scanners eingefügt. Dies nutzt man, um in den Aktion-Teilen benutzte Variablen
+        zu deklarieren.
+    */
+    char    **tmp, *copy;
+
+    //genug Speicher anfordern
+    tmp = new( char *[userDefHeaderAnz + 1] );
+
+    //alte Zeiger kopieren
+    memcpy( tmp, userDefHeader, sizeof( char * ) * userDefHeaderAnz );
+
+    //alten Speicher freigeben?
+    if( userDefHeader )
+        delete[] ( userDefHeader );
+
+    //Zeiger umkopieren
+    userDefHeader = tmp;
+
+    //string kopieren
+    copy = yyStrCpy( str );
+
+    //eintragen
+    userDefHeader[userDefHeaderAnz++] = copy;
+}
+
+
+char **SSLEXScanner::getUserDefHeader( int &anz )
+{
+    /*
+        alle eingerückten Zeilen in %definition werden in das Header-File des erzeugten
+        Scanners eingefügt. Dies nutzt man, um in den Aktion-Teilen benutzte Variablen
+        zu deklarieren.
+    */
+
+    //Anzahl der Zeilen
+    anz = userDefHeaderAnz;
+
+    //zurückliefern
+    return( userDefHeader );
+}
+
+
+void SSLEXScanner::insertAction( char *str )
+{
+    /*
+        Eine Regel kann von einer Aktion gefolgt sein. Diese werden hier eingetragen und
+        vom Parser abgerufen.
+    */
+    char    **tmp, *copy;
+
+    //Speicher vorhanden?
+    if( actionAnz >= actionMax )
+    {
+        //nein, genug Speicher anfordern
+        tmp = new( char *[actionAnz + 100] );
+
+        //alte Zeiger kopieren
+        memcpy( tmp, actionStr, sizeof( char * ) * actionAnz );
+
+        //alten Speicher freigeben?
+        if( actionStr )
+            delete[] ( actionStr );
+
+        //Zeiger umkopieren
+        actionStr = tmp;
+
+        //neue max. Zahl der Zeilen
+        actionMax += 100;
+    }
+
+    //string kopieren
+    copy = yyStrCpy( str );
+
+    //eintragen
+    actionStr[actionAnz++] = copy;
+}
+
+
+char **SSLEXScanner::getAction( int &anz )
+{
+    //liefert die Aktionen zurück, die nach erfolgreichem Erkennen einer
+    //Regel ausgeführt werden sollen.
+    char    **tmp = actionStr;
+
+    //Anzahl der Einträge in actionStr
+    anz = actionAnz;
+
+    //zurücksetzen
+    actionAnz = 0;
+    actionMax = 0;
+    actionStr = 0L;
+
+    //zurückliefern
+    return( tmp );
+}
+
+
+void SSLEXScanner::scanExtension( void )
+{
+    //%extension-Angabe scannen
+    ulong   size;
+    char    *base;
+
+    //aktuelle Position im Text merken
+    base = pos;
+
+    //\} muss am Anfang einer Zeile stehen
+    while( !( ( pos[-1] == '\n' ) && ( pos[0] == '\\' ) && ( pos[1] == '}' ) ) )
+    {
+        //Überlauf?
+        if( pos >= end )
+        {
+            //Fehler
+            cerr << "sslex: line " << yyLineno << ": Missing } in %extension!" << endl;
+            exit( 1 );
+        }
+
+        pos++;
+    }
+
+    //löschen
+    pos += 2;
+
+    //extrahieren
+    size = pos - base + 1;
+
+    //Speicher anfordern
+    extension = new( char[size] );
+
+    //copieren
+    strncpy( extension, base, size - 1 );
+
+    //abschließen
+    extension[size - 1] = 0;
+}
+
+
+char *SSLEXScanner::getExtension( void )
+{
+    //%extension-Angaben liefern
+    return( extension );
+}
+
+
+char *SSLEXScanner::getInclude( void )
+{
+    //%include-Angaben liefern
+    return( incl );
+}
+
+
+void SSLEXScanner::insertRegExpDef( char *name, char *regExp )
+{
+    //ein NEA der Art "{NAME} reg" eintragen und in den Text zurücksetzen
+    NAME_NEA    *nameNea;
+    int         ret;
+
+    //reg. Ausdruck schon eingetragen?
+    if( ( ret = findRegExp( name ) ) < 0 )
+    {
+        //Speicher für eine neue Struktur anfordern
+        nameNea = new( NAME_NEA[nameNeaAnz + 1] );
+
+        //alten Bereich kopieren
+        memcpy( nameNea, nameNeaStr, sizeof( NAME_NEA ) * nameNeaAnz );
+
+        //alten Speicherbereich freigeben
+        if( nameNeaStr )
+            delete[] ( nameNeaStr );
+
+        //neuer Speicherbereich
+        nameNeaStr = nameNea;
+
+        //Zeiger auf neue Struktur
+        nameNea = &nameNeaStr[nameNeaAnz++];
+
+        //Namen eintragen
+        nameNea->name = name;
+
+        //Zeilennummer der Definition eintragen
+        nameNea->line = yyLineno;
+
+        //noch nicht benutzt
+        nameNea->used = false;
+
+        //reg. Ausdruck eintragen
+        nameNea->text = regExp;
+    }
+
+    else
+    {
+        //Fehler
+
+        //Zeiger auf Struktur
+        nameNeaStr = &nameNeaStr[ret];
+
+        //Meldung ausgeben
+        cerr << "sslex: line " << yyLineno << ": Reg. Expression already defined in line " << nameNeaStr->line <<"!" << endl;
+
+        //Fehler
+//      err++;
+    }
+}
+
+
+int SSLEXScanner::findRegExp( char *name )
+{
+    //ein reg. Ausdruck der Art {NAME} reg suchen
+    NAME_NEA    *nameNea;
+    int         i;
+
+    //alle bisherigen Einträge
+    for( i = 0; i < nameNeaAnz; i++ )
+    {
+        //Zeiger
+        nameNea = &nameNeaStr[i];
+
+        //Name gleich?
+        if( !strcmp( name, nameNea->name ) )
+            //ja
+            return( i );
+    }
+
+    //noch nicht da
+    return( -1 );
+}
+
+
+void SSLEXScanner::checkRegExp( void )
+{
+    //prüft, ob alle reg. Ausdrücke in %definition auch benutzt wurden
+    NAME_NEA    *nameNea;
+    int         i;
+
+    //alle bisherigen Einträge
+    for( i = 0; i < nameNeaAnz; i++ )
+    {
+        //Zeiger
+        nameNea = &nameNeaStr[i];
+
+        //benutzt?
+        if( nameNea->used == false )
+            //Meldung
+            cerr << "sslex: line " << nameNea->line << ": Regular Expression " << nameNea->name << " not used!" << endl;
+    }
+}
+
+
+char SSLEXScanner::getEsc( char *esc )
+{
+    //returns the correspondig character to an escape sequence
+    char    c, esc_char;
+    int     sptr, result;
+
+    switch( esc[1] )
+    {
+        //Backspace
+        case 'b':
+            return( '\b' );
+
+        //Linefeed
+        case 'f':
+            return( '\f' );
+
+        //newline
+        case 'n':
+            return( '\n' );
+
+        //carriage return
+        case 'r':
+            return( '\r' );
+
+        //Tabulator
+        case 't':
+            return( '\t' );
+
+#if __STDC__
+        //bing
+        case 'a':
+            return( '\a' );
+
+        //vertical tab
+        case 'v':
+            return( '\v' );
+#else
+        //bing
+        case 'a':
+            return( '\007' );
+
+        //vertical tab
+        case 'v':
+            return( '\013' );
+#endif
+
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        {
+            //ist ein oktaler Wert, ala \123
+            sptr = 1;
+
+            while( isascii( esc[sptr] ) && isdigit( esc[sptr] ) )
+                ++sptr;
+
+            c = esc[sptr];
+            esc[sptr] = 0;
+
+            sscanf( esc + 1, "%o", &result );
+            esc_char = result;
+
+            esc[sptr] = c;
+
+            return( esc_char );
+        }
+
+        case 'x':
+        {
+            //ist ein hexadezimaler Wert
+            sptr = 2;
+
+            while( isascii( esc[sptr] ) && isxdigit( (char) esc[sptr] ) )
+                ++sptr;
+
+            c = esc[sptr];
+            esc[sptr] = 0;
+
+            sscanf( esc + 2, "%x", &result );
+            esc_char = result;
+
+            esc[sptr] = c;
+
+            return( esc_char );
+        }
+
+        default:
+            return( esc[1] );
+    }
+}
+
+
+void SSLEXScanner::appendScanRegTxt( char *txt )
+{
+    //anhängen
+    char    *tmp;
+    int     len1 = strlen( scanRegTxt );
+    int     len2 = strlen( txt );
+
+    //vergrößern?
+    if( ( len1 + len2 ) >= scanRegTxtLength )
+    {
+        //ja
+        len2 = ( len2 > SCAN_REG_TXT ) ? len2 : SCAN_REG_TXT;
+
+        //Speicher anfordern
+        tmp = new( char[scanRegTxtLength + len2 + 1] );
+
+        //alten Inhalt kopieren
+        strcpy( tmp, scanRegTxt );
+
+        //löschen
+        delete[] ( scanRegTxt );
+
+        //Zeiger anpassen
+        scanRegTxt = tmp;
+
+        //neue Größe
+        scanRegTxtLength = scanRegTxtLength + len2;
+    }
+
+    //anhängen
+    strcat( scanRegTxt, txt );
+}
+
+
+char *SSLEXScanner::getScanRegTxt( ulong &line )
+{
+    /*
+        Jeder reg. Ausdruck wird in textform gespeichert. Dieser ist nach dem Erhalt
+        von NEWLINE anzufordern.
+    */
+    char    *tmp = yyStrCpy( scanRegTxt );
+
+    //initialisieren für den nächsten Scan
+    scanRegTxt[0] = 0;
+
+    //Zeile zurückliefern
+    line = regTextLine;
+
+    //zurückliefern
+    return( tmp );
+}
+
+
+
+
+\}
+

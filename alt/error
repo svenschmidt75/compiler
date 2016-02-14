@@ -1,0 +1,95 @@
+M”gliche Vorgehensweise bei Fehlermeldungen
+-------------------------------------------
+
+
+*******************************
+* 'X' declared but never used *
+*******************************
+
+Am Ende eines jeden Block berprfen, ob alle Variablen benutzt wurden.
+Flag in der Sysmboltabelle, das gesetzt wird, sobald auf die Variable zu-
+gegriffen wird.
+
+
+--------------------------------------------------------------------------
+
+****************************************************************
+* 'X' is assigned a value which is never used in function main *
+****************************************************************
+
+Feld in Symboltabelle:	Nachdem die Funktion vom Compiler abgearbeitet
+						wurde, werden alle Variablen auf Benutzung ber-
+						prft.
+
+Feld in Symboltabelle:	0:	Variable wurde benutzt.
+						1:	Variable wurde nicht benutzt.
+
+--------------------------------------------------------------------------
+
+*****************************
+* 'X' nor part of structure *
+*****************************
+
+Prfen, ob der Identifier in der Struktur definiert wurde.
+
+--------------------------------------------------------------------------
+
+******************************************
+* Both return and return of a value used *
+******************************************
+
+Wenn es sich um eine Routine handelt, die einen Wert zurckliefert, dann
+muž return mit einem Wert verwendet werden.
+
+--------------------------------------------------------------------------
+
+**************************************
+* Call to function with no prototype *
+**************************************
+
+Wenn der Kopf einer Funktion erkannt wurde, prfen, ob es dazu einen Proto-
+typen gibt.
+
+--------------------------------------------------------------------------
+
+**********************
+* Code has no effect *
+**********************
+
+Wenn ein Wert z.B. keinem Lvalue zugewiesen wird.
+
+	a + b;
+
+--------------------------------------------------------------------------
+
+********************
+* Constant is long *
+********************
+
+Wenn der Wert > 65535 bzw. > 32767 und der Zusatz l fehlt.
+
+--------------------------------------------------------------------------
+
+**********************************************************
+* Possible use of 'X' before definition in function main *
+**********************************************************
+
+Wenn der Inhalt von a benutzt wird, bevor a einen Wert zugewiesen bekommt.
+
+Feld in Symboltabelle:	0: a wurde einen Wert zugewiesen
+						1: a wurde keinem Wert zugewiesen
+
+--------------------------------------------------------------------------
+
+*****************************
+* 'X' ist always true/false *
+*****************************
+
+Bsp:
+
+unsigned long a = 10;
+
+if( a < 10 )
+
+--------------------------------------------------------------------------
+

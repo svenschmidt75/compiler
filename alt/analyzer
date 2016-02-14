@@ -1,0 +1,65 @@
+/************/
+/* Analyzer */
+/************/
+
+
+Features:
+---------
+
+
+Suchen
+-------------------------------------------------------------------------------
+
+- Variablen, Funktionen, Strukturdefinitionen, Unions etc.
+- unbenutzte Variablen(lokal und global)
+- Systemfuktionen suchen
+- öberflÅssige Includes suchen
+- Defines( #define TEXT )
+- unbenutzte Union- / Strukturelemente
+- Malloc/Mfree( folgt das eine auf das andere ? )
+- doppelte Prototypen
+- unbenutzte Prototypen
+
+Wo wurde was geraucht/definiert ?
+( ggf. mehrere Fundstellen )
+
+
+Negative RÅckgabewerte in unsigned functions.
+
+ULONG test( VOID )
+{
+	return( -1 );
+}
+
+oder
+
+
+Vergleiche von unsigned Variablen mit negativen Werten.
+ULONG test = 0;
+
+if( test < 0 )
+
+
+
+
+
+- prÅft die lexikalische Struktur
+- prÅft die syntaktische Struktur
+- prÅft Semmantik
+
+- Variablen, Funktionen suchen
+- Definitionen(#define) suchen
+
+
+
+
+
+AUSGABE
+--------------------------------------------------------------------------------------
+
+Projekt : LR_NEW.PRJ
+Modul   : GEN.C
+Funktion: generate_hulle
+Zeile   : 119
+
+Beispiel

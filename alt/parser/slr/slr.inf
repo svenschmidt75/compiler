@@ -1,0 +1,34 @@
+;Info-Datei zum SLR-Parser
+
+;FOLLOW-Mengen ausgeben
+FOLLOW = ON
+
+;FIRST-Mengen ausgeben
+FIRST = ON
+
+;SLR-Items ausgeben
+ITEMS = ON
+
+;Ausgabe in Datei
+;FILE
+;SCREEN
+;PRN
+DEST = FILE
+
+;Analyse der Grammatik ausgeben
+ANALYZE = ON
+
+;DEBUG-Version erzeugen
+DEBUG = OFF
+
+;Tabelleninformationen ausgeben
+SLR_TAB_1 = ON
+
+;SLR-Tabelle ausgeben
+SLR_TAB_2 = ON
+
+;Gr”že der Grammatik-Hash-Tab
+G_HASH_TAB_SIZE = 2001
+
+;Max. Anzahl der Zeichen pro Zeile
+MAX_CHAR		= 60

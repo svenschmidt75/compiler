@@ -1,0 +1,50 @@
+13.04.1998
+Interna ber SSLR V1.00ž
+(S)/(LA)/LR-Parser-Generator
+(c) 1998 by Sven Schmidt
+
+
+
+SLR
+---
+
+Reduzieren:	Wenn [ A -> x. ] in Ii ist, dann setzte Aktion[Ii,a] fr alle a in FOLLOW(A) auf "reduziere A -> x".
+
+Es wird immer zu einer Produktion/Nichtterminal reduziert.
+FOLLOW(A) sind die Terminale, die dem Nichtterminal A folgend drfen.
+
+st		:	expr
+		;
+
+expr	:	expr 'ADD' term
+		|	expr 'SUB' term
+		|	'SUB' expr
+		|	term
+		;
+
+term	:	term 'MUL' factor
+		|	term 'DIV' factor
+		|	factor
+		;
+
+factor	:	'KLOPEN' expr 'KLCLOSE'
+		|	'ZAHL'
+		;
+
+Wenn nun der Parser mit expr reduzieren muž, tut er das fr die Terminale FOLLOW(expr) = { ADD, SUB, KLCLOSE }.
+
+I1
+--
+
+expr	->	expr ADD term.
+
+[I1,ADD] = reduziere expr	->	expr ADD term.
+[I1,SUB] = reduziere expr	->	expr ADD term.
+[I1,KLCLOSE] = reduziere expr	->	expr ADD term.
+
+
+
+
+LALR
+----
+

@@ -1,0 +1,233 @@
+SSLINK
+------
+
+
+Last Modified: 24.04.2005
+
+
+
+
+- Möglichkeit, mehrere Objektfiles zu einem neuen Objektfile zu linken
+- wenn in zwei verschiedenen Modulen das gleiche Label exportiert wird,
+  dann Fehlermeldundung
+- wenn ein Label als .export deklariert wurde, aber gar nicht benutzt wird
+
+
+- TEXT-Segment scannen, DATA-Segment scannen, BSS-Segment scannen
+- prüfen, ob Labels doppelt definiert wurden
+- prüfen, ob es zu allen Label-Deklarationen auch Labels gibt
+(es wird in einem Modul per .import auf ein Label zugegriffen, wurde
+dies auch per .export in einem anderen Modul deklariert?)
+- TEXT-, DATA- und BSS-Segmente neu zusammenfügen
+- richtige Offsets eintragen
+
+
+
+
+
+
+Es werden zwei Modi unterstützt: Zum einen kann ein "ausführbares" Programm
+erstellt werden, zum anderen können mehrere Objektfiles zu einem neuen
+gelinkt werden. Im zweiten Modus werden alle Referenzen zu externen Labels
+mitaufgenommen. Zum anderen werden aber schon alle die Referenzen aufgelöst,
+deren Position bekannt ist.
+
+Ablauf:
+
+Zuerst alle Objektfiles einlesen. Dann für jedes Objektfile die Strukturen
+
+struct _opcodeFixStruct
+struct _exportLabelStruct
+
+erzeugen. Dann prüfen, ob es mehrere Labels gleichen Namens gibt, die exportiert wurden.
+Dann die bekannten Positionen eintragen. Dann alle Objektfiles zu einem neuen zusammenfügen
+und neue, angepasste Strukturen
+
+struct _opcodeFixStruct
+struct _exportLabelStruct
+
+erzeugen.
+
+Beim Erzeugen "ausführbarer" Programme muss noch ein Sprung zur Routine main erzeugt werden.
+
+
+
+
+
+
+- Adressierungsarten
+--------------------
+
+
+//Data Register Direct
+
+	- Datenregister-Nummer
+
+
+//Adress Register Direct
+
+	- Adressregister-Nummer
+
+
+//Status Register
+
+	-> nichts
+
+
+//Adress Register Indirect
+
+	- Adressregister-Nummer
+
+
+//Adress Register Indirect with Postincrement
+
+	- Adressregister-Nummer
+
+
+//Adress Register Indirect with Predecrement
+
+	- Adressregister-Nummer
+
+
+//Adress Register Indirect with Displacement
+
+	- Adressregister-Nummer
+	- Displacement, long
+
+
+//Program Counter Register Indirect with Displacement
+
+	- Displacement, long
+
+
+//Immediate Data
+
+	- Immediate Data, long
+
+
+//Absolute Adressing
+
+	- Adresse, long
+
+
+
+
+
+
+
+
+
+
+Objektfile-Format
+-----------------
+
+Header
+------
+
+- Anfang des Textsegemnts
+- Länge des Textsegemnts
+- Anfang des DATA-Segemnts
+- Länge des DATA-Segemnts
+- Anfang des BSS-Segemnts
+- Länge des BSS-Segemnts
+- Länge des Dateinamens in Bytes
+- Dateiname in Bytes
+- Anfang der Adressen der Befehle, die importierte Labels benutzen
+- Anzahl der Adressen der Befehle, die importierte Labels benutzen
+- Adresse, Name und Zeile der Labels, die exportiert werden sollen
+- Anzahl von Adresse, Name und Zeile der Labels, die exportiert werden sollen
+
+
+
+Struktur für den Header
+
+struct _SSASSHeader
+{
+	//Länge des folgenden Strings
+	unsigned short	_versionLength;
+
+	//String mit der Version von SSASS
+	char			*_version;
+
+	//Länge des folgenden Strings
+	unsigned short	_fileNameLength;
+
+	//Dateiname des Moduls
+	char			*_fileName;
+
+	//Anfang des Textsegemnts
+	long			_text;
+
+	//Länge des Textsegments
+	long			_textLength;
+
+	//Anfang des DATA-Segemnts
+	long			_data;
+
+	//Länge des DATA-Segments
+	long			_dataLength;
+
+	//Anfang des BSS-Segemnts
+	long			_bss;
+
+	//Länge des BSS-Segments
+	long			_bssLength;
+
+	/*
+		Beginn des Auflistung der Adressen der Befehle in diesem Modul,
+		die auf externe Labels zugreifen und deshalb angepasst werden müssen.
+	*/
+	long			_opcodeFix;
+
+	//Länge dieses Bereichs
+	long			_opcodeFixLength;
+
+	/*
+		Wenn dieses Modul Labels exportiert, denn Name, Adresse und Zeilennummer
+		der zu exportierenden Labels.
+	*/
+	long			_exportLabel;
+
+	//Länge dieses Bereichs
+	long			_exportLabelLength;
+};
+
+
+
+/*
+	Beginn des Auflistung der Adressen der Befehle in diesem Modul,
+	die auf externe Labels zugreifen und deshalb angepasst werden müssen.
+*/
+struct _opcodeFixStruct
+{
+	//Adresse des Opcodes
+	long	_adr;
+
+	//Zeile im Source-File
+	long	_line;
+
+	//Name des benötigten Labels
+	char	*_labelName;
+};
+
+
+
+/*
+	Wenn dieses Modul Labels exportiert, denn Name, Adresse und Zeilennummer
+	der zu exportierenden Labels.
+*/
+struct _exportLabelStruct
+{
+	//Name des Labels
+	char	*_labelName;
+
+	//Dateiname, in dem das Label definiert wurde
+	char	*_fileName;
+
+	//Zeile, in der das Label definiert wurde
+	long	_line;
+
+	//Adresse des Labels
+	long	_adr;
+};
+

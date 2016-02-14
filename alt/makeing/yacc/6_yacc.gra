@@ -1,0 +1,373 @@
+%{
+%}
+
+%%
+
+/* Grundproduktionen */
+
+module
+	:		file
+
+file
+	:		external_definition
+		|	file external_definition
+
+external_definition
+	:		function_definition
+		|	declaration
+
+function_definition
+	:		function_declarator function_body
+
+function_declarator
+	:		declarator
+		|	declaration_specifiers declarator
+
+function_body
+	:		compound_statement
+		|	declaration_list compound_statement
+
+
+/* Deklarationen */
+
+declaration_list
+	:		declaration
+		|	declaration_list declaration
+
+declaration
+	:		declaration_specifiers "SEMI"
+		|	declaration_specifiers init_declarator_list "SEMI"
+
+init_declarator_list
+	:		init_declarator
+		|	init_declarator_list "COMMA" init_declarator
+
+init_declarator
+	:		declarator
+		|	declarator "EQU" initializer
+
+declaration_specifiers
+	:		type_definition
+		|	storage_class_specifier
+		|	type_specifier
+		|	type_qualifier
+		|	declaration_specifiers type_definition
+		|	declaration_specifiers storage_class_specifier
+		|	declaration_specifiers type_specifier
+		|	declaration_specifiers type_qualifier
+
+type_specifier_list
+	:		type_specifier
+		|	type_specifier_list type_specifier
+
+type_definition
+	:		"_TYPEDEF"
+
+storage_class_specifier
+	:		"_EXTERN"
+		|	"_STATIC"
+		|	"_AUTO"
+		|	"_REGISTER"
+
+type_specifier
+	:		"_CHAR"
+		|	"_SHORT"
+		|	"_INTEGER"
+		|	"_LONG"
+		|	"_SIGNED"
+		|	"_UNSIGNED"
+		|	"_FLOAT"
+		|	"_DOUBLE"
+		|	"_VOID"
+		|	struct_or_union_specifier
+		|	enum_specifier
+		|	typedef_name
+
+typedef_name
+	:		"_IDENT"
+
+type_qualifier
+	:		"_CONST"
+		|	"_VOLATILE"
+
+initializer_list
+	:		initializer
+		|	initializer_list "COMMA" initializer
+
+initializer
+	:		assignment_expr
+		|	"BOPEN" initializer_list "BCLOSE"
+		|	"BOPEN" initializer_list "COMMA" "BCLOSE"
+
+declarator
+	:		direct_declarator
+		|	pointer direct_declarator
+
+direct_declarator
+	:		identifier
+		|	"KLOPEN" declarator "KLCLOSE"
+		|	direct_declarator "AROPEN" "ARCLOSE"
+		|	direct_declarator "AROPEN" constant_expr "ARCLOSE"
+		|	direct_declarator "KLOPEN" "KLCLOSE"
+		|	direct_declarator "KLOPEN" parameter_type_list "KLCLOSE"
+		|	direct_declarator "KLOPEN" parameter_identifier_list "KLCLOSE"
+
+pointer
+	:		"_POINT"
+		|	"_POINT" type_specifier_list
+		|	"_POINT" pointer
+		|	"_POINT" type_specifier_list pointer
+
+parameter_identifier_list
+	:		identifier_list
+		|	identifier_list "COMMA" "ELIPSIS"
+
+identifier_list
+	:		identifier
+		|	identifier_list "COMMA" identifier
+
+parameter_type_list
+	:		parameter_list
+		|	parameter_list "COMMA" "ELIPSIS"
+
+parameter_list
+	:		parameter_declarator
+		|	parameter_list "COMMA" parameter_declarator
+
+parameter_declarator
+	:		type_specifier_list declarator
+		|	type_name
+
+type_name
+	:		type_specifier_list
+		|	type_specifier_list abstract_declarator
+
+abstract_declarator
+	:		pointer
+		|	abstract_direct_declarator
+		|	pointer abstract_direct_declarator
+
+abstract_direct_declarator
+	:		"KLOPEN" abstract_declarator "KLCLOSE"
+		|	"AROPEN" "ARCLOSE"
+		|	"AROPEN" constant_expr "ARCLOSE"
+		|	abstract_direct_declarator "AROPEN" "ARCLOSE"
+		|	abstract_direct_declarator "AROPEN" constant_expr "ARCLOSE"
+		|	"KLOPEN" "KLCLOSE"
+		|	"KLOPEN" parameter_type_list "KLCLOSE"
+		|	abstract_direct_declarator "KLOPEN" "KLCLOSE"
+		|	abstract_direct_declarator "KLOPEN" parameter_type_list "KLCLOSE"
+
+struct_or_union_specifier
+	:		struct_or_union identifier "BOPEN" struct_declaration_list "BCLOSE"
+		|	struct_or_union "BOPEN" struct_declaration_list "BCLOSE"
+		|	struct_or_union identifier
+
+struct_or_union
+	:		"_STRUCT"
+		|	"_UNION"
+
+struct_declaration_list
+	:		struct_declaration
+		|	struct_declaration_list struct_declaration
+
+struct_declaration
+	:		type_specifier_list struct_declarator_list "SEMI"
+
+struct_declarator_list
+	:		struct_declarator
+		|	struct_declarator_list "COMMA" struct_declarator
+
+struct_declarator
+	:		declarator
+		|	"DBPOINT" constant_expr
+		|	declarator "DBPOINT" constant_expr
+
+enum_specifier
+	:		"ENUM" "BOPEN" enumerator_list "BCLOSE"
+		|	"ENUM" identifier "BOPEN" enumerator_list "BCLOSE"
+		|	"ENUM" identifier
+
+enumerator_list
+	:		enumerator
+		|	enumerator_list "COMMA" enumerator
+
+enumerator
+	:		identifier
+		|	identifier "EQU" constant_expr
+
+
+/* Anweisungen */
+
+statement_list
+	:		statement
+		|	statement_list statement
+
+statement
+	:		labeled_statement
+		|	compound_statement
+		|	expression_statement
+		|	selection_statement
+		|	iteration_statement
+		|	jump_statement
+
+labeled_statement
+	:		identifier "DBPOINT" statement
+		|	"CASE" constant_expr "DBPOINT" statement
+		|	"DEFAULT" "DBPOINT" statement
+
+compound_statement
+	:		"BOPEN" "BCLOSE"
+		|	"BOPEN" statement_list "BCLOSE"
+		|	"BOPEN" declaration_list "BCLOSE"
+		|	"BOPEN" declaration_list statement_list "BCLOSE"
+
+expression_statement
+	:		"SEMI"
+		|	expr "SEMI"
+
+selection_statement
+	:		"IF" "KLOPEN" expr "KLCLOSE" statement
+		|	"IF" "KLOPEN" expr "KLCLOSE" statement "ELSE" statement
+		|	"SWITCH" "KLOPEN" expr "KLCLOSE" statement
+
+iteration_statement
+	:		"WHILE" "KLOPEN" expr "KLCLOSE" statement
+		|	"DO" statement "WHILE" "KLOPEN" expr "KLCLOSE" "SEMI"
+		|	"FOR" "KLOPEN" "SEMI" "SEMI" "KLCLOSE" statement
+		|	"FOR" "KLOPEN" "SEMI" "SEMI" expr "KLCLOSE" statement
+		|	"FOR" "KLOPEN" "SEMI" expr "SEMI" "KLCLOSE" statement
+		|	"FOR" "KLOPEN" "SEMI" expr "SEMI" expr "KLCLOSE" statement
+		|	"FOR" "KLOPEN" expr "SEMI" "SEMI" "KLCLOSE" statement
+		|	"FOR" "KLOPEN" expr "SEMI" "SEMI" expr "KLCLOSE" statement
+		|	"FOR" "KLOPEN" expr "SEMI" expr "SEMI" "KLCLOSE" statement
+		|	"FOR" "KLOPEN" expr "SEMI" expr "SEMI" expr "KLCLOSE" statement
+
+jump_statement
+	:		"GOTO" identifier "SEMI"
+		|	"CONTINUE" "SEMI"
+		|	"BREAK" "SEMI"
+		|	"RETURN" "SEMI"
+		|	"RETURN" expr "SEMI"
+
+
+/* AusdrÅcke */
+
+identifier
+	:		"IDENT"
+
+primary_expr
+	:		"CONST"
+		|	identifier
+		|	"STRING"
+		|	"KLOPEN" expr "KLCLOSE"
+
+postfix_expr
+	:		primary_expr
+		|	postfix_expr "AROPEN" expr "ARCLOSE"
+		|	postfix_expr "KLOPEN" "KLCLOSE"
+		|	postfix_expr "KLOPEN" argument_expr_list "KLCLOSE"
+		|	postfix_expr "STRUCT_SYMB_1" identifier
+		|	postfix_expr "STRUCT_SYMB_2" identifier
+		|	postfix_expr "ADD_ADD"
+		|	postfix_expr "SUB_SUB"
+
+unary_expr
+	:		postfix_expr
+		|	"ADD_ADD" unary_expr
+		|	"SUB_SUB" unary_expr
+		|	unary_operator cast_expr
+		|	"_SIZEOF" unary_expr
+		|	"_SIZEOF" "KLOPEN" type_name "KLCLOSE"
+
+unary_operator
+	:		"_AND"
+		|	"_MUL"
+		|	"_ADD"
+		|	"_SUB"
+		|	"_NEG"
+		|	"_NOT"
+
+cast_expr
+	:		unary_expr
+		|	"KLOPEN" type_name "KLCLOSE" cast_expr
+
+multiplicative_expr
+	:		cast_expr
+		|	multiplicative_expr "_MUL" cast_expr
+		|	multiplicative_expr "_DIV" cast_expr
+		|	multiplicative_expr "_MOD" cast_expr
+
+additive_expr
+	:		multiplicative_expr
+		|	additive_expr "_ADD" multiplicative_expr
+		|	additive_expr "_SUB" multiplicative_expr
+
+shift_expr
+	:		additive_expr
+		|	shift_expr "_SHL" additive_expr
+		|	shift_expr "_SHR" additive_expr
+
+relational_expr
+	:		shift_expr
+		|	relational_expr "LESS" shift_expr
+		|	relational_expr "GREAT" shift_expr
+		|	relational_expr "LESS_EQU" shift_expr
+		|	relational_expr "GREAT_EQU" shift_expr
+
+equality_expr
+	:		relational_expr
+		|	equality_expr "EQU_EQU" relational_expr
+		|	equality_expr "NOT_EQU" relational_expr
+
+and_expr
+	:		equality_expr
+		|	and_expr "_AND" equality_expr
+
+exclusive_or_expr
+	:		and_expr
+		|	exclusive_or_expr "_EXP" and_expr
+
+inclusive_or_expr
+	:		exclusive_or_expr
+		|	inclusive_or_expr "_OR" exclusive_or_expr
+
+logical_and_expr
+	:		inclusive_or_expr
+		|	logical_and_expr "AND_AND" inclusive_or_expr
+
+logical_or_expr
+	:		logical_and_expr
+		|	logical_or_expr "OR_OR" logical_and_expr
+
+conditional_expr
+	:		logical_or_expr
+		|	logical_or_expr "QUESTION_MARK" expr "DBPOINT" conditional_expr
+
+assignment_expr
+	:		conditional_expr
+		|	unary_expr assignment_operator assignment_expr
+
+assignment_operator
+	:		"EQU"
+		|	"MUL_EQU"
+		|	"DIV_EQU"
+		|	"MOD_EQU"
+		|	"ADD_EQU"
+		|	"SUB_EQU"
+		|	"AND_EQU"
+		|	"EXP_EQU"
+		|	"OR_EQU"
+		|	"SHL_EQU"
+		|	"SHR_EQU"
+
+expr
+	:		assignment_expr
+		|	expr "COMMA" assignment_expr
+
+constant_expr
+	:		conditional_expr
+
+argument_expr_list
+	:		assignment_expr
+		|	argument_expr_list "COMMA" assignment_expr

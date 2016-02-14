@@ -1,0 +1,163 @@
+Interna zu SSLR
+---------------
+
+Last modified: 05.02.2005
+
+
+
+
+
+
+
+
+
+Verarbeitung der %error-Anweisungen
+-----------------------------------
+
+
+Für jede Fehleranweisung der Art
+
+sect1
+	:	'DEFINITION' union definition1
+%error
+{
+	0:SHIFT(DEFINITION:	"Missing %definition directive!"
+}
+	;
+
+wird eine ERROR_STR angefordert. In ihr steht die Position des Punktes (dot) und die
+Nummer der Alternative (prod2_index in PROD2_STR). Damit ist das LR-Item, bei dem
+die Fehlermeldung stattdinden soll, bestimmt.
+Ein LR-Parser findet einen Fehler frühestmöglich und er wird keine fehlerhaften
+Terminale auf den Parse-Stack schieben. Manchmal wird er, bevor er weiterschieben
+würde, noch ein oder mehrere Reduktionsschritte ausführen. Ba aber ein Fehler vorliegt,
+wird er dies nicht tun. Folgendes Beispiel verdeutlicht dies
+
+union
+	:	startUnion 'BOPEN' unionBody 'BCLOSE'
+%error
+{
+	//wenn in der %union-Angabe eine offene geschweifte Klammer vergessen wurde
+	1:OVERREAD(BCLOSE):		"Missing { in %union!"
+}
+	|	'EPSILON'
+	;
+
+
+startUnion
+	:	'UNION'
+	;
+
+
+unionBody
+	:	unionBody unionBody2
+	|	unionBody2
+	;
+
+
+unionBody2
+	:	'IDENT' 'IDENT' 'SEMIKOLON'
+	|	'IDENT' 'AST' 'IDENT' 'SEMIKOLON'
+	;
+
+Diese Fehleranwieung kommt in zwei Zuständen zum tragen, 8 und 9. Dies sieht man an
+den Hüllen der Zustände.
+
+
+Hülle 8 = Sprung( 4, startUnion )
+Kern:	 union ->  startUnion . 'BOPEN'  unionBody  'BCLOSE' ,LEFT_ASSOC,ACCEPT,RIGHT_ASSOC,NON_ASSOC,NTERM_TYPE,TERM_TYPE,GRAMMAR
+Sprung(BOPEN) = 23
+
+
+Hülle 9 = Sprung( 4, UNION )
+Kern:	 startUnion ->  'UNION' .,BOPEN
+
+Wenn nun BOPEN nicht das Lookahead-Termina ist, so wird der Parser in Zustand 9 nicht
+reduzieren. Die Fehleranweisung würde aber nicht zum Tragen kommen, denn das LR-Item
+
+union
+	:	startUnion .'BOPEN' unionBody 'BCLOSE'
+
+taucht in Zustand 8 auf. Also muss SSLR die Zustände finden, in denen er in einem Fehlerfalle
+nicht reduziert und so eine vorhandene Fehleraktion nicht ausgeführt würde.
+
+
+Wenn SSLR auf eine Fehleranweisung der Art
+prod1 -> ... prod2 .prod3 prod4 ..., dann bestimmt er zuerst, welche Zustände vor dem sein dürfen,
+mit dem eine Fehleranweisung verbunden ist.
+
+
+ALGORITHMUS
+-----------
+
+1.
+	Zuerst sucht SSLR in ALLEN Hüllen nach reduzierenden LR-Items, bei denen
+	FIRST(prod4) in der Lookahead-Menge enthalten ist, d.h. insbesondere, dass
+	die Lookahead-Mange auch größer sein kann!
+	Ist prod4 nicht existent, d.h. steht der Punkt in der Fehleranweisung hinter
+	dem letzten Element auf der rechten Seite (die Fehler-LR-Item ist also selbst
+	ein reduce-LR-Item), dann ersetzte FIRST(prod4) mit FOLLOW(prod1).
+	Wenn ein geeignetes LR-Item gefunden wird, dann muss geprüft werden, ob es
+	vor dem Fehler-Zustand im Parse-Prozess stehen kann.
+
+2.
+	Sei der Punkt auf der rechten Seite nicht an erster Stelle.
+	Ist das Element vor dem Punkt ein Terminal, d.h. prod2, dann wäre das
+	LR-Item so etwas wie
+	prod1 -> ... .'TERMINAL' prod3 ...
+	Dann wird dieses LR-Item in ALLEN Hüllen gesucht und in den gefundenen
+	auch eingetragen.
+
+	Sei prod2 nun ein Nicht-Terminal. Dann wird der Punkt um eine Position nach links
+	verschoben und es wird die Hülle gebildet, also
+	Hülle({prod1 -> ... .prod2 prod3 ...}).
+	In dieser Hülle stehen nun die LR-Items, die dem Fehler-LR-Item voranstehen können.
+	Nun wird in dieser Hülle nach den unter 1. bestimmten reduzierenden LR-Items
+	gesucht. Wird es gefunden, so wird die Fehleranweisung mit dem Zustand verbunden,
+	in dem es auftaucht.
+
+	z.B.
+
+union
+	:	startUnion 'BOPEN' unionBody 'BCLOSE'
+%error
+{
+	//wenn in der %union-Angabe eine offene geschweifte Klammer vergessen wurde
+	1:OVERREAD(BCLOSE):		"Missing { in %union!"
+}
+	|	'EPSILON'
+	;
+
+	Das Fehler-LR-Item lautet
+	union -> startUnion .'BOPEN' unionBody 'BCLOSE'
+	Nun wird in allen Hüllen nach reduzierenden LR-Items gesucht, die
+	FIRST(BOPEN)=BOPEN in ihrer Lookahead-Menge haben. Dann wird
+	Hülle({union -> .startUnion 'BOPEN' unionBody 'BCLOSE'}) gebildet.
+	Darin sind die LR-Items
+
+	union -> . startUnion  'BOPEN'  unionBody  'BCLOSE' ,LEFT_ASSOC,ACCEPT,RIGHT_ASSOC,NON_ASSOC,NTERM_TYPE,TERM_TYPE,GRAMMAR
+	union -> . 'EPSILON' ,LEFT_ASSOC,ACCEPT,RIGHT_ASSOC,NON_ASSOC,NTERM_TYPE,TERM_TYPE,GRAMMAR
+	startUnion -> . 'UNION' ,BOPEN
+
+	Nun werden diese als reduziere-LR-Items angesehen und mit den reduzierenden LR-Items
+	aus dem ersten Schritt verglichen. Z.B. wird LR-Item
+	startUnion -> 'UNION' .,BOPEN in Hülle 9 gefunden. Da es auch in
+	Hülle({union -> .startUnion 'BOPEN' unionBody 'BCLOSE'}) steht, wird die Fehleranweisung
+	mit Hülle 9 verbunden.
+
+3.
+	Sei nun das Fehler-LR-Item der Art
+	prod1 -> .prod2 ...
+	Nun steht der Punkt an erster Stelle. Um nun die LR-Items bestimmen zu können, die
+	im Parse-Prozess vor dem Fehler-LR-Item stehen dürfen, müssen wir nach Produktionen
+	prodX -> ... prodY prod1 ... suche.
+	Dann bilden wir
+	Hülle({prodX -> ... .prodY prod1 ...}) gebildet. Dann werden die unter 1. gefundenen
+	reduzierenden LR-Items in dieser Hülle gesucht.
+	Steht prod1 selbst wieder am Anfang, also
+	prodX -> .prod1 ..., dann suchen wir nach Produktionen der Art
+	prodZ -> ... prodW prodX ...
+	Dann bilden wir Hülle({prodZ -> ... .prodW prodX ...}) etc.
+
+
+

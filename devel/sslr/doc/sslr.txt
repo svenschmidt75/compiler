@@ -1,0 +1,720 @@
+SSLR V0.5a - Ein LA-/LALR-/SLR-Parser-Generator
+(c) 2003-2005 by Sven Schmidt
+s.schmidt@lboro.ac.uk
+
+Last modified: 04.03.2005
+
+
+
+I. Einleitung
+-------------
+
+Bei SSLR handelt es sich um einen Parser-Generator, der einen LR-Parser generiert, wie er in [1]
+beschrieben ist. SSLR erzeugt dabei ein C++-File sowie das zugehörige Header-File und eine Datei
+sslrtermdef.h, die die #defines mit den Terminalen enthält, die der Scanner zurückliefert.
+
+Kurz zur Geschichte: Irgendwann zwischen 1992 und 1994 gewann mich ein Klassenkamerad für den
+Compilerbau. Zwar habe ich bis heute keinen eigenen geschrieben, die Faszination für diese Thematik habe
+ich allerdings nie aufgegeben. Damals arbeitete ich noch mit einem ATARI 1040STE, später mit dem
+Falcon030 (den habe ich heute noch!). Ich fing dann auch bald mit der Programmierung eines
+SLR-Parser-Generators an (ich habe den Source immer noch). Damals benutzte ich PureC von ASH, eine
+wahnsinns C-Programmierumgebung (gute alte Zeiten :-)). Die Entwicklung des ersten Parser-Generators
+dauerte ziemlich lange, ich glaube, so um die 2.5 Jahre. Bald darauf folgte eine erweiterte Fassung, die
+auch LR- und LALR-Tabellen erzeugen konnte. Da ich aber die LALR-Tabellen über den Umweg der LR-Tabellen
+erzeugte, musste bald wieder eine neue Fassung her, die aus den SLR-Tabellen die LALR-Tabellen erzeuen
+konnte. Dann hatte ich, nachdem ich zur Bundeswehr ging, lange keine Zeit mehr zum Programmieren, erst
+wieder mit Beginn meines Studiums. Wie gesagt, die Faszination ließ mich nicht los uns so entschloss ich
+mich, einen neuen Parser-Generator zu programmieren, diesmal aber in C++, da ich schon lange mit LINUX
+arbeite. Nun, nach ca. (effektiv) drei Wochen, war er fertig.
+
+
+Um das Zusammenspiel von SSLR und SSLEX (mein Scanner-Generator a la flex) zu verstehen, habe ich das Projekt
+"SimpleCalc" geschrieben, welches einen simplen Rechner implementiert.
+Mittlerweile benutzt SSLR einen von SSLEX erzeugten Scanner sowie einen von sich selbst erzeugten
+Parser.
+
+
+
+II. Kommandozeilen-Argumente
+----------------------------
+
+SSLR nimmt die folgenden Kommandozeilen-Argumente an:
+
+-vX	bewirkt ausführliche Meldungen des Parser-Generators (optional X=0,1,2)
+-d	es wird die Debug-Version des cpp-Files erzeugt
+-f1	gebe FIRST-Mengen aus
+-f2	gebe FOLLOW-Mengen aus
+-h	gebe alle Hüllen aus
+-o	gebe Grammatik in BNF-Form in Datei sslr.gra aus
+-1	erzeugt SLR-Tabellen
+-2	erzeugt LALR-Tabellen
+-3	erzeugt LR-Tabellen
+
+Wenn es z.B. Probleme beim Parsing gibt, so besteht die Möglichkeit, eine Debugging-Version des Parsers
+zu erstellen. Es werden dann zusätzliche Informationen ins cpp-File aufgenommen und beim Parsen
+ausgegeben.
+
+
+III. Format des Input-Files
+---------------------------
+
+Es folgt erst einmal ein typisches Grammatik-File. Erfahrene Anwender werden sicher Ähnlichkeiten mit
+YACC feststellen, die beabsichtigt sind. Im Anschluss wird dann auf die Steuerzeichen eingegangen.
+
+
+/*
+	Die folgenden Anweisungen sollen in das erzeugte cpp-File unverändert eingetragen werden.
+*/
+%include
+\{
+	/*
+		Hier stehen Dinge, die ins das cpp-File des erzeugten Parsers unverändert
+		übernommen werden.
+	*/
+
+
+
+//zusätzliche Includes
+#include <stdio.h>
+#include <string.h>
+
+#define DEF1
+#define DEF2
+
+	//SSLR initialisieren
+	#define SSLR_INIT
+\}
+
+
+
+//Es folgen diverse Anweisungen für den Parser-Generator
+%definition
+
+
+
+%union
+{
+	//Zahlen sind vom Typ float
+	float	f;
+}
+
+%left	ADD SUB
+%left	MUL DIV
+%right	UMINUS
+
+%termType <f> ZAHL
+%ntermType <f> expr term st
+%ntermType <f> factor
+
+
+
+%grammar
+
+
+st		:	expr  'SEMIKOLON' \{ printf( "%f", $1 ); \}
+%error
+{
+1:SHIFT(SEMIKOLON):	"Expression must end with;!\n"
+2:DELETE:
+}
+		;
+
+expr	:	expr 'ADD' term  \{ $$ = $1 + $3; \}
+		|	expr 'SUB' term  \{ $$ = $1 - $3; \}
+		|	'SUB' expr  %prec UMINUS \{ $$ = -$2; \}
+		|	term  \{ $$ = $1; \}
+		;
+
+term	:	term 'MUL' factor  \{ $$ = $1 * $3; \}
+		|	term 'DIV' factor  \{ $$ = $1 / $3; \}
+		|	factor  \{ $$ = $1; \}
+		;
+
+
+factor	:	'KLOPEN' expr 'KLCLOSE'  \{ $$ = $2; \}
+%error
+{
+0:KLCLOSE:SHIFT(KLOPEN):DELETE:	"Use ( instead!\n"
+2:KLOPEN:						") expected!\n"
+}
+		|	'ZAHL'  \{ $$ = $1; \}
+		;
+
+
+
+
+//Es folgen Hilfsroutinen, die der Benutzter festlegen kann
+%extension
+\{
+
+void sslrParser::_void( void )
+{
+	//nichts
+}
+
+
+\}
+
+
+
+
+III.1 %include
+--------------
+
+Wie man sieht, beginnt ein Grammatik-File typischerweise mit einigen Anweisungen, die in das generierte
+cpp-File unverändert bernommen werden sollen. Dies kann im Prinzip alles mögliche sein, was mit Definitionen
+etc. zu tun hat. Etwaige Methoden sollte man am Schluss mit %extension einfügen. Die Anweisung
+%include ist optional.
+Wird in %include das Makro SSLR_INIT definiert, so ruft der Konstrukter der Klasser des erzeugten
+cpp-Files, SSLRParser, die Routine init auf. Diese muss dann aber im %extension-Teil definiert worden sein.
+Ausserdem muss sie im %definition-Teil so deklariert worden sein
+
+	void init( void );
+
+Doch dazu später mehr. Im Destruktor wird, sofern SSLR_INIT deklariert wurde, die Routine deinit aufgerufen,
+wobei auch sie im %definition-Teil deklariert sein muss. Diese Routinen kann man benutzen, um in SSLR
+benutzte Datenstrukturen zu initialisieren.
+WICHTIG: Schliessen Sie die %include-Anweisung so ab, dass \} am Zeilenanfang steht!
+
+
+
+III.2 %definition
+-----------------
+
+In diesem Bereich können Sie mittels %union dem Parser sagen, welche möglichen Typen mit den
+semantischen Aktionen verbunden sind. Wichtig ist, dass %union VOR %ntermDef/%termDef definiert werden
+muss, da SSLR sonst die in letzterem verwendeten semantischen Typen nicht kennt.
+Man kann dem Parser nach dem Reduzieren gewisse Aufgaben mittels der semantischen Aktionen zuweisen,
+die jeweils mit einem bestimmten Typ verbunden sind.
+Die Produktion factor ist z.B. mit dem Typ float verbunden, der mittels %ntermType <f> factor festgelegt
+wurde. Dazu später Genaueres.
+Man kann SSLR natrlich auch sagen, dass es sich bei ZAHL um ein Terminal handelt, das der Scanner
+liest. Dabei liefert der Scanner einen float-Wert zurck. Dies geschieht durch die Anweisung
+%termType <f> ZAHL.
+
+
+ACHTUNG: Alle in Bereich %definition eingerückten Zeilen werden unverändert ins Header-File
+des erzeugten Parsers mit aufgenommen, um z.B. Funktionen, die in %extension definiert sind, zu
+deklarieren. Insbesondere müssen hier init und deinit deklariert werden, wenn im %include-Teil
+das Makro SSLR_INIT definiert wurde.
+
+
+
+III.3 %extension
+----------------
+
+Oft benötigt man im Parser zusätzliche Hilfsfunktionen. Diese können Sie in dieser Sektion einführen, so
+dass sie dann von SSLR in das erzeugte cpp-File eingefügt werden.
+
+
+
+III.4 Prioritäten und Assoziativitäten
+--------------------------------------
+
+Um in SSLR Shift-Reduce-Konflikte lösen zu können, besteht die Möglichkeit, jedem Terminal eine
+Priorität und Assoziativität zuzuordnen.
+Z.B. sind die Operationen Addition(ADD), Subtraktion(SUB), Multiplikation(MUL) und Division(DIV) alle
+links-assoziativ, MUL und DIV haben aber höhere Priorität als ADD und SUB.
+
+Beispiel:
+
+%definition
+
+%left ADD SUB
+%left MUL DIV
+
+%grammar
+
+expr	:	expr 'ADD' expr
+		|	expr 'SUB' expr
+		|	expr 'MUL' expr
+		|	expr 'DIV' expr
+		|	'KLOPEN' expr 'KLCLOSE'
+		|	'NUMBER'
+		;
+
+
+Nehmen Sie an, der Parser hat erfolgreich NUMBER MUL NUMBER erkannt. In der Eingabe steht als nächstes
+Terminal ADD. Nun wird es zu einem Shift-Reduce-Konflikt kommen, da der Parser nicht weiß ob er mit
+expr MUL expr reduzieren soll, oder ober ADD schieben soll.
+Da aber MUL eine höhere Priorität hat als ADD, wird der Parser, wie es auch richtig ist, zuerst mit
+expr MUL expr reduzieren und dann erst ADD schieben.
+
+Ein berühmtes Beispiel ist die Anweisung
+
+statement	->	IF expr THEN statement
+			|	IF expr THEN statement ELSE statement
+			;
+
+Standardaktion von SSLR ist schieben.
+
+Weiterhin besteht die Möglichkeit, einem Terminal zwar eine Priorität zuzuordnen, aber es als
+nicht-assoziativ zu deklarieren. Dazu steht dem Benutzter das Schlüsselwort %nonassoc zur Verfügung.
+Lesen Sie bitte in [1] Genaueres nach.
+
+
+
+III.5 %prec
+-----------
+
+Gegeben sei folgender Ausschnitt aus einer Grammatik:
+
+
+%definition
+
+%left ADD SUB
+%left MUL DIV
+%right UMINUS
+
+%grammar
+
+expr	:	expr 'ADD' expr
+		|	expr 'SUB' expr
+		|	expr 'MUL' expr
+		|	expr 'DIV' expr
+		|	'KLOPEN' expr 'KLCLOSE'
+		|	'SUB' expr	%prec UMINUS
+		|	'NUMBER'
+		;
+
+Nun soll der Parser, wenn er auf 'SUB' expr taucht, SUB schieben und dann expr lesen, wobei es sich bei
+SUB um ein unitäres Minus handelt. Der Parser soll also Schiebe SUB vorziehen vor Reduziere mit expr
+'...' expr. Dazu fgen Sie am Ende der entsprechenden Alternative ein %prec mit dem Terminal an, dessen
+Priorität die Alternative erhalten soll. Wie man anhand der Definitionen sieht, ist UMINUS
+rechts-assoziativ und hat, da es an letzter Stelle steht, die höhste Priorität. ADD und SUB sind
+dagegen links-assoziativ und haben die geringste Priorität.
+
+
+
+III.6 %nonassoc
+---------------
+
+Verwenden Sie %nonassoc, wenn das Terminal nicht-assoziativ sein soll (vgl. [1]).
+
+
+
+
+IV. Aufbau einer Produktion
+---------------------------
+
+Sie haben die Möglichkeit, SSLR eine Grammatik in BNF-Form oder in EBNF-Form zu übergeben. Z.B. sieht
+die PL0-Grammatik in EBNF-Form so aus:
+
+program		:	block 'PERIOD'
+			;
+
+block		:	[ 'CONST' 'IDENT' 'EQU' 'NUMBER' { 'COMMA' 'IDENT' 'EQU' 'NUMBER' } 'SEMI' ]
+				[ 'VAR' 'IDENT' { 'COMA' 'IDENT' } 'SEMI' ]
+				{ 'PROCEDURE' 'IDENT' 'SEMI' block 'SEMI' } statement
+			;
+
+statement	:	[ 'IDENT' 'BECOMES' expr
+			|	'CALL' 'IDENT'
+			|	'BEGIN' statement { 'SEMI' statement } 'END'
+			|	'IF' condition 'THEN' statement
+			|	'WHILE' condition 'DO' statement ]
+			;
+
+condition	:	'ODD' expr
+			|	expr ( 'EQU' | 'RAUTE' | 'LESS' | 'LESS_EQU' | 'GREATER' | 'GREATER_EQU' ) expr
+			;
+
+expr		:	[ 'ADD' | 'SUB' ] term { ( 'ADD' | 'SUB' ) term }
+			;
+
+term		:	factor { ( 'MUL' | 'DIV' ) factor }
+			;
+
+factor		:	'IDENT'
+			|	'NUMBER'
+			|	'KLOPEN' expr 'KLCLOSE'
+			;
+
+
+Als erstes müssen Sie den Namen der entsprechenden Produktion angeben, gefolgt von einem :, ::=, ->.
+Anschließend folgen die Alternativen, die eine Produktion ausmachen.
+Eine Alternative besteht aus einer Reihe von Nichtterminalen wie z.B. expr, factor, term, etc. und
+Terminalen, die in einfachen Hochstrichen anzugeben sind.
+Hat eine Produktion mehr als eine Alternative, so sind die weiteren mit | voneinander zu trennen.
+Hinter jeder Alternative können Sie sog. semantische Aktionen angeben (s. Abschnitt VII). Jede
+Produktion muss mit einem ; enden!
+Semantische Aktionen können an beliebiger Stelle einer rechten Seite auftreten. Es ist allerdings
+nicht zulässig, nur eine semantische Aktion als einzigen Eintrag einer Alterntive anzugeben,
+also z.B.
+
+prod1
+	:	\{ semantische Aktion \}
+	;
+
+EBNF erweitert die BNF-Notation um die Elemente {}, [] und (). Sie können auf der rechten Seite
+auftreten.
+Folgendes Bsp verdeutlicht die Bedeutung der Zeichen ():
+
+prod1
+	:	'ODD' prod2
+	|	prod2 ( 'EQU' | 'RAUTE' | 'LESS' | 'LESS_EQU' | 'GREATER' | 'GREATER_EQU' ) prod2
+	;
+
+Das BNF-Äquivalent sieht so aus
+
+prod1
+	:	'TERM1' prod2
+	|	prod2 auysym1 prod2
+	;
+
+auxsym1
+	:	'TERM1'
+	|	'TERM2'
+	|	'TERM3'
+	|	'TERM4'
+	|	'TERM5'
+	|	'TERM6'
+	;
+
+Es dient also dem Gruppieren von Ausdrücken gleicher Art. Eine Angabe kann mit [] optional
+gemacht werden:
+
+
+prod1
+	:	[ 'TERM1' | 'TERM2' ] prod2 prod3
+	;
+
+Dies entspricht in BNF
+
+prod1
+	:	auxsym1 prod2 prod3
+	;
+
+auxsym1
+	:	'TERM1'
+	|	'TERM2'
+	|	'EPSILON'
+	;
+
+Wenn der Parser also in prod1 ist, kann ein Terminal 'TERM1' oder 'TERM2' folgen, oder
+eines aus FIRST(prod2).
+Mit [] setzt man also eine Art Kann-Regel um.
+
+Mit den Zeichen {} kann man eine Angabe schließlich beliebig oft wiederholen, also aus
+
+prod1
+	:	factor { ( 'TERM1' | 'TERM2' ) }
+
+wird in BNF
+
+prod1
+	:	factor  auxsym_12
+	;
+
+auxsym_12
+	->	 auxsym_13  factor  auxsym_12
+	|	 'EPSILON'
+	;
+
+auxsym_13
+	->	 'TERM1'
+	|	 'TERM2'
+	;
+
+
+
+
+V. Die Verwendung von leeren Produktionen
+-----------------------------------------
+
+Wenn Sie eine Produktion als "optional" verwenden wollen, so bietet sich die Verwendung von leeren
+Produktionen an. Vergleichen Sie die EBNF-Produktion
+
+expr		:	[ 'ADD' | 'SUB' ] term { ( 'ADD' | 'SUB' ) term }
+
+mit ihrem entsprechenden BNF-Pendant:
+
+expr
+	->	 auxsym_9  term  auxsym_10 	/* Priority: 0 */
+	;
+
+auxsym_9
+	->	 'ADD' 	/* Priority: 0 */
+	|	 'SUB' 	/* Priority: 0 */
+	|	 'EPSILON' 	/* Priority: 0 */
+	;
+
+auxsym_10
+	->	 auxsym_10 	/* Priority: 0 */
+	|	 auxsym_11  term 	/* Priority: 0 */
+	|	 'EPSILON' 	/* Priority: 0 */
+	;
+
+auxsym_11
+	->	 'ADD' 	/* Priority: 0 */
+	|	 'SUB' 	/* Priority: 0 */
+	;
+
+
+Am Anfang kann ADD/SUB stehen, muss es aber nicht (Verwendung der EBNF-Erweiterung []). Durch die
+Verwendung von EPSILON in auxsym_9 wird dem Parser gesagt, dass ADD oder SUB in der Eingabe stehen kann,
+aber nicht muss (leere Produktionen, in allen Bchern mit epsilon bezeichnet). Er wrde dann mit
+term weitermachen. Nach Term dürfen beliebig oft (auch nullmal) ADD/SUB term folgen. Schauen Sie sich
+dies an und spielen Sie damit herum, um sich an diese Schreibweise zu gewöhnen.
+
+
+
+VI. Fehleranweisungen
+---------------------
+
+Sie können dem Parser mit einer einfachen Fehlerbehandlung versehen. Dazu fügen Sie nach der
+entsprechenden Alternative die Anweisung %error ein wie es anhand des Beispiels oben gezeigt ist.
+Wenn Sie semantische Aktionen benutzen, dann muss die %error-Anweisung hinter dem \} stehen, also
+nach Abschluss der semantischen Aktion!
+Folgende Fehleranweisungen erlaubt:
+
+
+Dot:TERM1,TERM2,...:					"Fehlermeldung!"
+Dot:TEMR1,TERM2,...:Fehleraktionen:		"Fehlermeldung"
+Dot:!(TERM1,TERM2,...):					"Fehlermeldung"
+Dot:!(TERM1,TERM2,...):Fehleraktion:	"Fehlermeldung"
+Dot:Fehleraktion						"Fehlermeldung"
+Dot:									"Fehlermeldung"
+
+
+Dot bezeichnet die Position des Punktes, die angibt, wieviel der Parser von der entsprechenden
+Alternative bereits erfolgreich gelesen hat.
+TERM1 etc. bezeichnet die Terminale, bei denen die Fehleranweisung angewendet werden soll.
+!TERM1 bedeutet, dass sich die Fehleranweisung auf alle Terminale ausser TERM1 beziehen soll.
+Durch Komma getrennt, können Sie mehrere angeben.
+
+Nehmen Sie bspw. die Alternative
+
+factor	:	'KLOPEN' expr 'KLCLOSE'
+%error
+{
+	2:KLOPEN:			"\nUse ')' instead of '(' !"
+}
+
+Diese Angaben sagen dem Parser, dass er die entsprechende Fehlermeldung ausgeben soll, wenn er im
+Zustand
+
+factor	:	'KLOPEN' expr .'KLCLOSE'
+
+auf das Terminal KLOPEN statt KLCLOSE trifft.
+
+
+Zusätzlich können Sie dem Parser sagen, was er anschließend tun soll.
+Zur Auswahl stehen sechs Fehleraktionen:
+
+POP(TERMINAL):		der Parser soll solange Zustände vom Parse-Stack entfernen, bis
+					er einen Zustand erreicht, in dem das Terminal TERMINAL geschoben
+					werden darf
+SHIFT(TERMINAL):	der Parser soll das Terminal TERMINAL schieben
+OVERREAD(TERMINAL):	der Parser soll die Eingabe überlesen, bis er auf das Terminal TERMNAL trifft
+EXIT:				der Parser soll den kompletten Parse-Prozess abbrechen
+DELETE:				der Parser soll das aktuelle Terminal aus der Eingabe entfernen
+SEM:				trotz Fehler soll der Parser weiterhin semantische Aktionen ausführen
+
+Die Fehlerbehandlung im Allgemeinen ist wohl sehr trickreich. Wenn Sie mittels SHIFT einen neuen Zustand
+auf den Parse-Stack schieben, so wird zuerst solange wie möglich reduziert, und erst dann versucht, den
+Zustand zu schieben. Allerdings wird der Parser nur dann ein Terminal bei SHIFT schiebt, wenn es im
+entsprechenden Zustand auch geschoben werden darf. Das ist bei LR-Parsern gerechtfertigt, da sie einen
+Fehler frühestmöglich finden und keine fehlerhaften Terminale schieben. Näheres lesen Sie bitte in [1] nach.
+DELETE darf auch mehrfach angegeben werden.
+
+Die Anweisung OVERREAD implementiert z.B. die "panische Fehler-Recovery", d.h. dass im Falle eines
+Fehlers solange Terminale aus der Eingabe gelöscht werden, bis das entsprechende Terminal in der Eingabe
+steht. Dies sind typischerweise Zeichen wie } oder Ähnliches (in der Programmiersprache C, C++).
+Eine Fehlermeldung kann durch eine Fehleranmeldung abgeschlossen werden; wird die weggelassen, so
+wird im Falle eines Fehlers gar nichts ausgegeben.
+
+Weiterhin verfügt SSLR über eine einfache Standard-Fehlerbehandlung, die versucht, trotz eines
+Fehlers soviel von der Eingabe zu lesen wie es möglich ist. Dabei werden solange Terminale aus der
+Eingabe gelöscht, bis ein Terminal in der Eingabe steht, dass in der FOLLOW-Menge des Nichtterminals
+steht, mit dem die letzte erfolgreiche Reduktion stattfand. Ich bin mir sehr wohl im Klaren, dass es
+sich dabei um eine äußerst primitive Fehlerbehandlung handelt. Natürlich sollten Sie sie an die
+gegebenen Umstände anpassen und erweitern.
+
+Besteht eine Fehleraktion nur aus SEM oder ist gar keine angegeben, so wird die automatische
+Fehlerbehandlung gestartet. Wurde SHIFT, DELETE oder OVERREAD gewählt, so wird die automatische
+Fehlerbehandlung NICHT aufgerufen, da SSLR davon ausgeht, dass der Benutzer den Fehler
+behebt.
+
+Zusätzlich werden im erzeugten Parser-File die Follow-Mengen der Nichtterminale ausgegeben, da sie
+sich für die Fehlerbehandlung eignen. Wenn z.B. die Start-Produktion "start" heißt, so sieht
+die Definition wie folgt aus:
+
+long SSLRParser::SSLR_startFollow[1] = { ACCEPT };
+
+Der Name setzt sich also aus dem Namen der Produktion zusammen, gefolgt von "Follow".
+Anschließend folgt die Anzahl der Follow-Terminale, hier nur eines, ACCEPT.
+
+
+
+VII. Semantische Aktionen
+-------------------------
+
+Es besteht die Möglichkeit, dem Parser Aufgaben zu übertragen, die er jedesmal ausführt, wenn er mit
+einer Alternative reduziert. Die in Abschnitt III gezeigte Grammatik implementiert einen Mini-Rechner,
+ausschließlich mit Hilfe der semantischen Aktionen! Selbstverständlich können die semantischen Aktionen
+weitaus komplizierter sein. In den durch \{ und \} geschweiften Klammern darf vollwertiger C- bzw.
+C++-Code stehen.
+
+Ich denke, die Verwendung der semantischen Aktionen ist selbsterklärend. Es gibt die Steuerzeichen $$
+und $ZAHL. $$ bezieht sich immer auf den Namen der Produktion, $ZAHL gibt die Position des Elementes
+auf dem Parse-Stack an, dessen Wert benutzt werden soll. Schauen Sie sich am besten mal den generierten
+C++-Code an.
+Wichtig: Durch Verwendung von EBNF oder durch Verwendung eingebetteter Aktionen ist es notwenig, den expliziten
+Typ des Nichtterminals angeben zu können, also
+
+
+
+%union
+{
+	//Zahlen sind vom Typ float
+	float	f;
+}
+
+%left	ADD SUB
+%left	MUL DIV
+
+%termType <f> ZAHL
+%ntermType <f> nterm1
+
+
+%grammar
+
+
+prod	->	nterm1
+			\{
+				//dies ist eine semantische Aktion
+				$<f>$ = diesIstSinnlos();
+			\}
+			nterm2 nterm3
+			;
+
+Dies wird von SSLR so umgestellt
+
+prod	->	nterm1 auxsym_1 nterm2 nterm3
+			;
+
+auxsym_1	->	'EPSILON'
+			\{
+				//dies ist eine semantische Aktion
+				$<f>$ = diesIstSinnlos();
+			\}
+			;
+
+Da ja in %union für diese eingeschobenen Nichtterminale kein Typ angegeben werden kann, muss man
+dies explizit machen, indem man zwischen $$ bzw. $x den Typ mit <Typ in %union> einschiebt.
+
+
+
+
+VII.1 Eingebettete semantische Aktionen
+--------------------------------------
+
+Genau wie in YACC ist es auch in SSLR möglich, semantische Aktionen in die rechte Seite
+einzubetten. Dazu wird an der Stelle der semantischen Aktion ein auxsym-Nichtterminal eingefügt,
+das mit einer leeren Produktion reduziert. Schauen Sie sich am besten das YACC-Manual dazu an.
+Den entsprechenden Typ können Sie wie folgt implementieren: $<Typ>$x. Die eingebetteten semantischen
+Aktionen sind für die Vererbung synthetischer Attribute auf dem Parse-Stack wichtig! (vgl. [1]).
+Beachten Sie jedoch, dass die Angabe der semantischen Aktion als einziger Eintrag auf der
+rechten Seite nicht zulässig ist.
+
+
+
+VIII. Die Schnittstelle zum Scanner
+-----------------------------------
+
+Um den erzeugten Parser benutzen zu können, müssen Sie eine Instanz der Klasse SSLRParser erzeugen.
+Standardmäßig müssen Sie dabei einen Zeiger auf die Scanner-Klasse übergeben, die SSLEXScanner
+heisst (weil optimiert für die Zusammenarbeit mit SSLEX). Sie muss eine (public) Methode implementieren,
+die folgendermaßen definiert ist:
+
+	int yyLex( SSLR_TYPE &attributeStr );
+
+SSLR_TYPE wird von SSLR generiert und im File sslrtermdef.h abgelegt, die von SSLEX generierte Scanner
+automatisch inkludieren. In attributeStr schreibt der Scanner das Attribut eines Terminals.
+Dies kann ein String, eine Zahl, etc. sein. Bitte achten Sie darauf, dass der Typ des Attributs
+auch in %union definiert ist! sslrparser.cpp inkludiert das Scanner-Header-File, so dass
+auch SSLRParser diesen Typ kennt. Die Terminale, der der Scanner zurückliefert, sind ebenfalls
+in sslrtermdef.h mittels #define definiert.
+
+Die Routine
+
+	void reset( void );
+
+setzt den Parser intern zurck.
+Der Parse-Prozess wird mittels
+
+	int yyParse( void );
+
+gestartet.
+Die Routine liefert die Anzahl der Fehler zurück.
+
+Um das Zusammenspiel von SSLR und SSLEX zu verstehen, habe ich das Projekt "simpleClac" geschrieben. Es
+benutzt einen Scanner, der von SSLEX generiert wurde, sowie einen Parser, der von SSLR generiert wurde.
+
+
+
+IX. Bemerkungen zu den erzeugten Files
+--------------------------------------
+
+
+Im erzeugten Parser-File sslrparser.cpp wird immer eine Struktur der Art
+
+//Terminals for debugging
+char *SSLR_scannerToken[] =
+{
+	/*0*/ "SEMIKOLON",
+	/*1*/ "DIV",
+	/*2*/ "KLCLOSE",
+	/*3*/ "UMINUS",
+	/*4*/ "ZAHL",
+	/*5*/ "MUL",
+	/*6*/ "SUB",
+	/*7*/ "KLOPEN",
+	/*8*/ "ADD",
+	/*9*/ "ACCEPT",
+	0L
+};
+
+definiert, damit Sie, falls Sie eine eigene Fehlerbehandlungsroutine schreiben, auf die Namen der
+Terminal-Symbole zugreifen können, möglicherweise um Fehlermeldungen auszugeben.
+Die FOLLOW-Sets werden ebenfalls immer mit ausgegeben, da sie sich für eine Fehlerbehandlung
+eignen und SSLRs interne Fehlerbehandlung diese auch verwendet.
+
+//follow sets for the error recovery
+long SSLRParser::SSLR_startFollow[1] = { ACCEPT };
+long SSLRParser::SSLR_stFollow[1] = { ACCEPT };
+long SSLRParser::SSLR_exprFollow[4] = { SEMIKOLON, KLCLOSE, SUB, ADD };
+long SSLRParser::SSLR_termFollow[6] = { SEMIKOLON, DIV, KLCLOSE, MUL, SUB, ADD };
+long SSLRParser::SSLR_factorFollow[6] = { SEMIKOLON, DIV, KLCLOSE, MUL, SUB, ADD };
+
+
+
+X. Schlusswort
+---------------
+
+Beachten Sie bitte, dass es sich bei SSLR um eine frühe Version handelt, die sicher voller Fehler ist.
+Wenn Sie Fragen oder Probleme haben, so scheuen Sie sich nicht, sich an mich zu wenden.
+Da ich KEIN Informatiker bin, ist sicher alles schrecklich unprofessionell gelöst. Haben Sie bitte
+Verständnis dafür, dass ich kein Super-Programmierer bin. Ich möchte aber unbedingt darum bitten,
+etwaige Verbesserungsvorschläge an mich zu senden, da ich sehr gerne dazu lerne.
+
+Meine eMail-Adresse lautet:
+s.schmidt@lboro.ac.uk
+
+Mittlerweile habe ich auch einen Scanner-Generator SSLEX geschrieben (ähnlich wie flex), der einen von
+SSLR generierten Parser benutzt.
+
+
+X. Literatur
+------------
+
+[1] Compilerbau, Alfred V. Aho, Ravi Sethi, Jeffrey D. Ullmann, Oldenbourg, 1999, 2. Aufl.
+[2] S.C. Johnson, Yacc - Yet Another Compiler-Compiler, Comp. Sci. Tech. Rep. No. 32.
+Bell Laboratories, July 1975
+[3] Donnely and Stallmann. The Bison Manual
+[4] M.E. Lesk - A Lexical Analyzer Generator. Comp. Sci. Tech. Rep. No. 39. Bell Laboratories,
+October 1975
+[5] Flex, A fast scanner generator, Edition 2.5
+[6] J.R. Levine, T. Mason, D. Brown, lex & yacc, O'Reilly, 2nd. Edition 1990
+

@@ -1,0 +1,3202 @@
+/*
+	SSASS V0.0a
+	Ein Assembler, der den von miniC generierten Assemblercode in
+	Maschinencode übersetzt.
+	Der von miniC emittierte Assemblercode entspricht dem des MC68030,
+	nur an vielen Stellen stark vereinfacht, denn der Maschinencode
+	soll später auf einer virtuellen Maschine laufen.
+
+	Die virtuelle Maschine hat beliebig viele Daten- und Adressregister,
+	da ich mich noch nicht mit der Vergabe von Registern und dem Auswerten
+	komplexer Ausdrücke beschäftigen möchte.
+
+	           Ab: 31.03.05
+	Last Modified: 26.04.05
+
+	Sven Schmidt
+	s.schmidt@lboro.ac.uk
+*/
+
+
+%include
+\{
+	//SSASS initialisieren
+	#define SSLR_INIT
+\}
+
+
+%definition
+
+	private:
+
+	//Command line arguments
+	ARGV_STR				*argvStr;
+
+	//Array mit den Opcodes
+	std::vector<COpcode *>	_opcodeArray;
+
+	//Array mit allen verwendeten Labels
+	std::vector<CLabel *>	_labelArray;
+
+	//prüft, ob während der Assemblierung Fehler aufgetreten sind
+	bool					_assErr;
+
+	//assemblierte Opcodes zählen
+	unsigned long			_opcodeCnt;
+
+	//Extension für einen Opcode oder für .dc. ...
+	COpcode::_extension		_extension;
+
+
+	/*
+		Jedes Objektfile hat einen Header, der wichtige Informationen
+		für den Linker bereithält.
+	*/
+	struct _SSASSHeader
+	{
+		//Länge des folgenden Strings
+		unsigned short	_versionLength;
+
+		//String mit der Version von SSASS
+		const char		*_version;
+
+		//Länge des folgenden Strings
+		unsigned short	_fileNameLength;
+
+		//Dateiname des Moduls
+		const char		*_fileName;
+
+		//Anfang des Textsegemnts
+		long			_text;
+
+		//Länge des Textsegments
+		long			_textLength;
+
+		//Anfang des DATA-Segemnts
+		long			_data;
+
+		//Länge des DATA-Segments
+		long			_dataLength;
+
+		//Anfang des BSS-Segemnts
+		long			_bss;
+
+		//Länge des BSS-Segments
+		long			_bssLength;
+
+		/*
+			Beginn des Auflistung der Adressen der Befehle in diesem Modul,
+			die auf externe Labels zugreifen und deshalb angepasst werden müssen.
+		*/
+		long			_opcodeFix;
+
+		//Länge dieses Bereichs
+		long			_opcodeFixLength;
+
+		/*
+			Wenn dieses Modul Labels exportiert, denn Name, Adresse und Zeilennummer
+			der zu exportierenden Labels.
+		*/
+		long			_exportLabel;
+
+		//Länge dieses Bereichs
+		long			_exportLabelLength;
+	};
+
+
+
+	/*
+		Beginn des Auflistung der Adressen der Befehle in diesem Modul,
+		die auf externe Labels zugreifen und deshalb angepasst werden müssen.
+	*/
+	struct _opcodeFixStruct
+	{
+		//Adresse des Opcodes
+		long		_adr;
+
+		//Zeile im Source-File
+		long		_line;
+
+		//Name des benötigten Labels
+		const char	*_labelName;
+	};
+
+	/*
+		Beginn des Auflistung der Adressen der Befehle in diesem Modul,
+		die auf externe Labels zugreifen und deshalb angepasst werden müssen.
+	*/
+	std::vector<struct _opcodeFixStruct>	_opcodeFixStr;
+
+
+	/*
+		Wenn dieses Modul Labels exportiert, denn Name, Adresse und Zeilennummer
+		der zu exportierenden Labels.
+	*/
+	struct _exportLabelStruct
+	{
+		//Name des Labels
+		const char	*_labelName;
+
+		//Dateiname, in dem das Label definiert wurde
+		const char	*_fileName;
+
+		//Zeile, in der das Label definiert wurde
+		long		_line;
+
+		//Adresse des Labels
+		long		_adr;
+	};
+
+	/*
+		In diesem Array stehen die Strukturen mit den zu exportierenden
+		Labels.
+	*/
+	std::vector<struct _exportLabelStruct>	_exportLabelStr;
+
+	//Dateiname des Moduls
+	const char								*moduleName;
+
+	//Header für das Objektfile
+	struct _SSASSHeader						_header;
+
+	//Adresse des nächsten Opcodes
+	long									_opcodeAdress;
+
+	/*
+		Im DATA-Segment werden mittels .dc.b, ..., .dc.d und .string statische Daten abgelegt.
+		Pro Zeile werden diese in CDCData abgelegt, welche wiederum in diesem Array
+		abgelegt werden (für die Code-Ausgabe).
+	*/
+	std::vector<CDCData *>					_CDCDataArray;
+
+	//nach dem Erkennen der Extension die entsprechende CDCData-Klasse erzeugen
+	CDCData									*_CDCDataDATA;
+
+	//Adress-Offset im Daten-Segment
+	long									_dataAdress;
+
+
+
+
+
+	//initialisieren
+	void init( void );
+
+	//deinitialisieren
+	void deinit( void );
+
+	//prüft, ob das Label bereits eingetragen wurde
+	CLabel *findLabel( const char * );
+
+	//prüft alle Labels auf korrekte Verwendung
+	void checkLabel( void );
+
+	//hier wird die Adresse eines Labels in die Opcodes eingetragen
+	void insertLabels( void );
+
+	/*
+		Opcodes, die per .import auf externe Labels zugreifen, können erst
+		vom Linker verarbeitet werden, weil jetzt die Adresse noch gar nicht
+		bekannt sein kann. Dazu wird eine Struktur aufgefüllt, die alle nötigen
+		Informationen enthält und im Objektfile hinter den Opcodes aufgelistet
+		wird, so dass der Linker SSLINK problemlos darauf zugreifen kann.
+	*/
+	void fillOpcodeFixStruct( void );
+
+	/*
+		Wenn dieses Modul Labels exportiert, also Labels per .export deklariert wurden,
+		dann deren Adresse, Zeile im Modul und den Namen exportieren.
+	*/
+	void fillExportLabelStruct( void );
+
+	//Header des Objektfiles erzeugen
+	void fillHeader( void );
+
+	//Objekt-File ausgeben
+	void writeObjectFile( void );
+
+	//eine COpcode-Klasse ins Array eintragen und Adressen etc. setzen
+	void insertOpcode( COpcode *, long );
+
+
+
+
+
+	public:
+
+	//dem Parser einige Variablen übergeben
+	void giveArgs( ARGV_STR * );
+
+
+
+
+%union
+{
+	//Nummer eines Registers
+	unsigned long			_integer;
+
+	//ganze Zahlen
+	unsigned long			_number;
+
+	//Bezeichner
+	char					*_name;
+
+	//Adressierungsart
+	CAdressingMode			*_adrMode;
+
+	//Extension
+	COpcode::_extension		_size;
+}
+
+
+//Typen für die semantischen Aktionen zuordnen
+%ntermType <_adrMode> adrMode
+%ntermType <_size> extSize
+%termType <_integer> DATA_REG ADRESS_REG
+%termType <_number> NUMBER
+%termType <_name> NAME LABEL_DEF STRING
+
+
+//Assoziativitäten und Prioritäten der Terminale
+
+
+
+%grammar
+
+
+
+program
+		->	 initSSASS section11 section12 section2 section3 section4
+\{
+	//das komplette Assembler-File wurde nun assembliert
+
+	//prüfen, ob alle Labels auch deklariert wurden
+	checkLabel();
+
+	//nun die Offsets in die Opcodes eintragen, die Labels als Displacement benzuten
+	insertLabels();
+
+
+	//Meldung ausgeben
+	std::cout << "ssass: " << _opcodeCnt << " opcodes assembled!" << std::endl;
+
+	//traten Fehler auf?
+	if( _assErr == true )
+	{
+		//ja, Meldung
+		std::cerr << "ssass: Aborting due to error(s)!" << std::endl;
+
+		//zurück
+		return;
+	}
+
+
+	/*
+		Opcodes, die per .import auf externe Labels zugreifen, können erst
+		vom Linker verarbeitet werden, weil jetzt die Adresse noch gar nicht
+		bekannt sein kann. Dazu wird eine Struktur aufgefüllt, die alle nötigen
+		Informationen enthält und im Objektfile hinter den Opcodes aufgelistet
+		wird, so dass der Linker SSLINK problemlos darauf zugreifen kann.
+	*/
+	fillOpcodeFixStruct();
+
+	/*
+		Wenn dieses Modul Labels exportiert, also Labels per .export deklariert wurden,
+		dann deren Adresse, Zeile im Modul und den Namen exportieren.
+	*/
+	fillExportLabelStruct();
+
+	//Header des Objektfiles erzeugen
+	fillHeader();
+
+	//Objekt-File ausgeben
+	writeObjectFile();
+\}
+		;
+
+
+initSSASS
+		->	'EPSILON'
+\{
+	/*
+		SSASS initialisieren
+	*/
+
+	//die Opcodes werden in einem Array abgelegt.
+	_opcodeArray.clear();
+
+	//alle verwendeten Labels werden hier eingetragen
+	_labelArray.clear();
+
+	//prüft, ob während der Assemblierung Fehler aufgetreten sind
+	_assErr = false;
+
+	//assemblierte Opcodes zählen
+	_opcodeCnt = 0;
+
+	//der Modulname ist bekannt
+	moduleName = argvStr->name;
+
+	//Adresse des nächsten Opcodes
+	_opcodeAdress = 0;
+
+	//Adress-Offset im Daten-Segment
+	_dataAdress = 0;
+\}
+		;
+
+
+section11
+		->	[ 'STACK' 'NUMBER' ]
+		;
+
+section12
+		->	{ 'IMPORT' 'NAME'
+\{
+	//ein Label soll importiert werden
+	CLabel *cl = new CLabel();
+
+	//wurde das Label bereits deklariert?
+	if( findLabel( $2 ) )
+	{
+		//Label bereits deklariert
+		std::cerr << "ssass: Line " << SSLR_line << ": Label " << $2 << " already declared!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Namen eintragen
+	cl->setName( $2 );
+
+	//Zeile eintragen
+	cl->setLine( SSLR_line );
+
+	//muss importiert werden
+	cl->setImport();
+
+	//in Label-Array eintragen
+	_labelArray.push_back( cl );
+\}
+		 | 'EXPORT' 'NAME'
+\{
+	//ein Label soll exportiert werden
+	CLabel *cl = new CLabel();
+
+	//wurde das Label bereits deklariert?
+	if( findLabel( $2 ) )
+	{
+		//Label bereits deklariert
+		std::cerr << "ssass: Line " << SSLR_line << ": Label " << $2 << " already declared!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Namen eintragen
+	cl->setName( $2 );
+
+	//Zeile eintragen
+	cl->setLine( SSLR_line );
+
+	//muss exportiert werden
+	cl->setExport();
+
+	/*
+		Da wir nicht wissen, ob das Label in einem anderen Modul benutzt wird,
+		setzen wir es hier auf benutzt, damit es keine Fehlermeldung gibt.
+	*/
+	cl->setUsed();
+
+	//in Label-Array eintragen
+	_labelArray.push_back( cl );
+\}
+		| 'LOCAL' 'NAME'
+\{
+	//ein Label soll nur in diesem Modul gültig sein
+	CLabel *cl = new CLabel();
+
+	//wurde das Label bereits deklariert?
+	if( findLabel( $2 ) )
+	{
+		//Label bereits deklariert
+		std::cerr << "ssass: Line " << SSLR_line << ": Label " << $2 << " already declared!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Namen eintragen
+	cl->setName( $2 );
+
+	//muss lokal werden
+	cl->setLocal();
+
+	//in Label-Array eintragen
+	_labelArray.push_back( cl );
+\}
+		}
+		;
+
+
+section2
+		->	'TEXT_SEG' section2List
+\{
+	/*
+		Der Code-Teil wurde geparst. In _opcodeArray befinden sich nun zu allen
+		Assembler-Befehlen die entsprechenden COpcode-Klassen.
+	*/
+
+	//die Start-Adresse des DATA-Segments ist die End-Adresse des TEXT-Segments
+	_dataAdress = _opcodeAdress;
+\}
+		;
+
+
+section2List
+		->	memnonic
+		|	section2List memnonic
+		;
+
+
+memnonic
+		->	'MOVE' extSize adrMode 'COMMA' adrMode
+\{
+	//der Move-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_MOVE );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'ADD' extSize adrMode 'COMMA' adrMode
+\{
+	//der Add-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_ADD );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'ADDX' extSize adrMode 'COMMA' adrMode
+\{
+	//der Addx-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_ADDX );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SUB' extSize adrMode 'COMMA' adrMode
+\{
+	//der Sub-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_SUB );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SUBX' extSize adrMode 'COMMA' adrMode
+\{
+	//der Subx-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_SUBX );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'MULU' extSize adrMode 'COMMA' adrMode
+\{
+	//der Mulu-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_MULU );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'MULS' extSize adrMode 'COMMA' adrMode
+\{
+	//der Muls-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_MULS );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'DIVU' extSize adrMode 'COMMA' adrMode
+\{
+	//der Divu-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_DIVU );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'DIVS' extSize adrMode 'COMMA' adrMode
+\{
+	//der Divs-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_DIVS );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'AND' extSize adrMode 'COMMA' adrMode
+\{
+	//der And-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_AND );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'OR' extSize adrMode 'COMMA' adrMode
+\{
+	//der Or-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_OR );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'XOR' extSize adrMode 'COMMA' adrMode
+\{
+	//der Xor-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_XOR );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'NEG' extSize adrMode
+\{
+	//der Neg-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_NEG );
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'NEGX' extSize adrMode
+\{
+	//der Negx-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_NEGX );
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'LSL' extSize adrMode 'COMMA' adrMode
+\{
+	//der Lsl-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_LSL );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'LSR' extSize adrMode 'COMMA' adrMode
+\{
+	//der Lsr-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_LSR );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'ASL' extSize adrMode 'COMMA' adrMode
+\{
+	//der Asl-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_ASL );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'ASR' extSize adrMode 'COMMA' adrMode
+\{
+	//der Asr-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_ASR );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'NOT' extSize adrMode
+\{
+	//der Not-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_NOT );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BRA' extSize adrMode
+\{
+	//der Bra-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BRA );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bra!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bra ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BEQ' extSize adrMode
+\{
+	//der Beq-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BEQ );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow beq!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in beq ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BNE' extSize adrMode
+\{
+	//der Bne-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BNE );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bne!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bne ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BLT' extSize adrMode
+\{
+	//der Blt-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BLT );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow blt!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in blt ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BLE' extSize adrMode
+\{
+	//der Ble-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BLE );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow ble!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in ble ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BGT' extSize adrMode
+\{
+	//der Bgt-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BGT );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bgt!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bgt ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BGE' extSize adrMode
+\{
+	//der Bge-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BGE );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bge!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bge ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BPL' extSize adrMode
+\{
+	//der Bpl-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BPL );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bpl!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bpl ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BMI' extSize adrMode
+\{
+	//der Bmi-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BMI );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bmi!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bmi ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BHI' extSize adrMode
+\{
+	//der Bhi-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BHI );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bhi!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bhi ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BLS' extSize adrMode
+\{
+	//der Bls-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BLS );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bls!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bls ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BCC' extSize adrMode
+\{
+	//der Bcc-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BCC );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bcc!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bcc ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BCS' extSize adrMode
+\{
+	//der Bcs-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BCS );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bcs!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bcs ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BVC' extSize adrMode
+\{
+	//der Bvc-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BVC );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bvc!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bvc ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BVS' extSize adrMode
+\{
+	//der Bvs-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BVS );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bvs!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bvs ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'BSR' extSize adrMode
+\{
+	//der Bsr-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_BSR );
+
+	//Adressierungsart muss Absolute Adressing sein
+	if( $3->getAdrMode() != CAdressingMode::_AA )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Label must follow bsr!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in bsr ignored!" << std::endl;
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'CLR' extSize adrMode
+\{
+	//der Clr-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_CLR );
+
+	//Zeile eintragen
+	op->setLine( SSLR_line );
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//in Array eintragen
+	_opcodeArray.push_back( op );
+
+	//assemblierte Opcodes zählen
+	_opcodeCnt++;
+\}
+		|	'CMP' extSize adrMode 'COMMA' adrMode
+\{
+	//der Cmp-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_CMP );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'EXT' extSize adrMode
+\{
+	//der Ext-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_EXT );
+
+	//Adressierungsart muss Data Register Direct sein
+	if( $3->getAdrMode() != CAdressingMode::_DRD )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Adressing mode must be data register direct in ext instruction!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	//ext.b ist nicht erlaubt
+	if( $2 == COpcode::_BYTE )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": ext.b invalid!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'EXTB' extSize adrMode
+\{
+	//der Extb-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_EXTB );
+
+	//Adressierungsart muss Data Register Direct sein
+	if( $3->getAdrMode() != CAdressingMode::_DRD )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Adressing mode must be data register direct in extb instruction!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_LONG ) )
+		//es gibt nur Long
+		op->setExt( COpcode::_LONG );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in extb must be .l!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'JMP' adrMode
+\{
+	//der Jmp-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_JMP );
+
+	//Adressierungsart eintragen
+	op->setSource( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'JSR' adrMode
+\{
+	//der Jsr-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_JSR );
+
+	//Adressierungsart eintragen
+	op->setSource( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'LEA' extSize adrMode 'COMMA' adrMode
+\{
+	//der Lea-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_LEA );
+
+	//Adressierungsart Destination muss Adress Register Direct sein
+	if( $5->getAdrMode() != CAdressingMode::_ARD )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Adressing mode must be adress register direct in lea instruction!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setSource( $5 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_LONG ) )
+		//es gibt nur Long
+		op->setExt( COpcode::_LONG );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in lea must be .l!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'PEA' extSize adrMode
+\{
+	//der Pea-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_PEA );
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_LONG ) )
+		//es gibt nur Long
+		op->setExt( COpcode::_LONG );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in pea must be .l!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'LINK' extSize adrMode 'COMMA' adrMode
+\{
+	//der Link-Befehl
+	CTwoOperandOpcode *op = new CTwoOperandOpcode( COpcode::_LINK );
+
+	//Adressierungsart Source muss Adress Register Direct sein
+	if( $3->getAdrMode() != CAdressingMode::_ARD )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": 1nd adressing mode must be adress register direct in link instruction!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart Destination muss Immediate Data sein
+	if( $5->getAdrMode() != CAdressingMode::_ID )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": 2nd adressing mode must be immediate data in link instruction!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+	op->setDest( $5 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'UNLK' extSize adrMode
+\{
+	//der Unlk-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_UNLK );
+
+	//Adressierungsart muss Adress Register Direct sein
+	if( $3->getAdrMode() != CAdressingMode::_ARD )
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Adressing mode must be adress register direct in unlk instruction!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Adressierungsart eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'NOP'
+\{
+	//der Nop-Befehl
+	CNoOperandOpcode *op = new CNoOperandOpcode( COpcode::_NOP );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'RTS'
+\{
+	//der Rts-Befehl
+	CNoOperandOpcode *op = new CNoOperandOpcode( COpcode::_RTS );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'TST' extSize adrMode
+\{
+	//der Tst-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_TST );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( $2 == COpcode::_NOEXT )
+		//Standard ist Word
+		op->setExt( COpcode::_WORD );
+
+	else
+		//eintragen
+		op->setExt( $2 );
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SST' extSize adrMode
+\{
+	//der Sst-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SST );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in sst must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SSF' extSize adrMode
+\{
+	//der Sst-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SSF );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in ssf must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SEQ' extSize adrMode
+\{
+	//der Seq-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SEQ );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in seq must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SNE' extSize adrMode
+\{
+	//der Sne-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SNE );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in sne must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SLT' extSize adrMode
+\{
+	//der Slt-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SLT );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in slt must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SLE' extSize adrMode
+\{
+	//der Sle-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SLE );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in sle must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SGT' extSize adrMode
+\{
+	//der Sgt-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SGT );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in sgt must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SGE' extSize adrMode
+\{
+	//der Sge-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SGE );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in sge must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SPL' extSize adrMode
+\{
+	//der Spl-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SPL );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in spl must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SMI' extSize adrMode
+\{
+	//der Smi-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SMI );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in smi must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SHI' extSize adrMode
+\{
+	//der Shi-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SHI );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in shi must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SLS' extSize adrMode
+\{
+	//der Sls-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SLS );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in sls must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SCC' extSize adrMode
+\{
+	//der Scc-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SCC );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in scc must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SCS' extSize adrMode
+\{
+	//der Scs-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SCS );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in scs must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SVC' extSize adrMode
+\{
+	//der Svc-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SVC );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in svc must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'SVS' extSize adrMode
+\{
+	//der Svs-Befehl
+	COneOperandOpcode *op = new COneOperandOpcode( COpcode::_SVS );
+
+	//Adressierungsarten eintragen
+	op->setSource( $3 );
+
+	//keine Extension angegeben?
+	if( ( $2 == COpcode::_NOEXT ) || ( $2 == COpcode::_BYTE ) )
+		//es gibt nur .b
+		op->setExt( COpcode::_BYTE );
+
+	//alles andere ist nicht erlaubt
+	else
+	{
+		//Fehlermeldung
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in svs must be .b!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//in Array eintragen
+	insertOpcode( op, SSLR_line );
+\}
+		|	'LABEL_DEF'
+\{
+	//ein Label
+	CLabel *cl;
+
+	//wurde das Label bereits deklariert?
+	if( !( cl = findLabel( $1 ) ) )
+	{
+		//nein, anlegen
+		cl = new CLabel();
+
+		//Zeile eintragen
+		cl->setLine( SSLR_line );
+
+		//Namen eintragen
+		cl->setName( $1 );
+	}
+
+	//Label schon definiert?
+	if( cl->getDefined() == true )
+	{
+		//Label bereits deklariert
+		std::cerr << "ssass: Line " << SSLR_line << ": Label " << $1 << " already declared!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Label definiert
+	cl->setDefined();
+
+	//Adresse eintragen
+	cl->setAdress( _opcodeAdress );
+
+	//in Label-Array eintragen
+	_labelArray.push_back( cl );
+\}
+		;
+
+
+extSize
+	->	'BYTE'
+\{
+	//.b
+	$$ = _extension = COpcode::_BYTE;
+\}
+	|	'WORD'
+\{
+	//.w
+	$$ = _extension = COpcode::_WORD;
+\}
+	|	'LONG'
+\{
+	//.l
+	$$ = _extension = COpcode::_LONG;
+\}
+	|	'SINGLE'
+\{
+	//.s
+	$$ = _extension = COpcode::_SINGLE;
+\}
+	|	'DOUBLE'
+\{
+	//.d
+	$$ = _extension = COpcode::_DOUBLE;
+\}
+	|	'EPSILON'
+\{
+	//keine Extension
+	$$ = _extension = COpcode::_NOEXT;
+\}
+	;
+
+
+section3
+	->		'DATA_SEG' section3List
+	|		'EPSILON'
+	;
+
+
+section3List
+	->	section32
+	|	section3List section32
+	;
+
+
+section32
+		->	'DC' extSize \{
+
+	//je nach Extension die entsprechende Spezialisierung erzeugen
+	switch( _extension )
+	{
+		//Byte
+		case COpcode::_BYTE:
+		{
+			//Spezialisierung für Bytes
+			_CDCDataDATA = new CDCDataByte();
+			break;
+		}
+
+		case COpcode::_WORD:
+		{
+			//Spezialisierung für Word
+			_CDCDataDATA = new CDCDataWord();
+			break;
+		}
+
+		case COpcode::_LONG:
+		{
+			//Spezialisierung für Longs
+			_CDCDataDATA = new CDCDataLong();
+			break;
+		}
+
+		case COpcode::_SINGLE:
+		{
+			//Spezialisierung für Floats
+			_CDCDataDATA = new CDCDataSingle();
+			break;
+		}
+
+		case COpcode::_DOUBLE:
+		{
+			//Spezialisierung für Doubles
+			_CDCDataDATA = new CDCDataDouble();
+			break;
+		}
+
+		default:
+		{
+			//unbekannte Extension
+			std::cerr << "ssass: Line " << SSLR_line << ": Invalid extension in .dc!" << std::endl;
+
+			//Fehler
+			_assErr = true;
+		}
+	}
+
+\} numList
+\{
+	//ins Array eintragen
+	_CDCDataArray.push_back( _CDCDataDATA );
+
+	//den Adress-Offset anpassen
+	_dataAdress += _CDCDataDATA->getSize();
+\}
+		|	'STRING_CODE' 'STRING'
+\{
+	//Spezialisierung für Bytes
+	CDCDataByte *tmp = new CDCDataByte();
+
+	//den String eintragen
+	tmp->insertString( $2 );
+
+	//ins Array eintragen
+	_CDCDataArray.push_back( tmp );
+
+	//den Adress-Offset anpassen
+	_dataAdress += tmp->getSize();
+\}
+		|	'LABEL_DEF'
+\{
+	//ein Label im DATA-Segment definieren
+	CLabel *cl = new CLabel();
+
+	//wurde das Label bereits deklariert?
+	if( findLabel( $1 ) )
+	{
+		//Label bereits deklariert
+		std::cerr << "ssass: Line " << SSLR_line << ": Label " << $1 << " already declared!" << std::endl;
+
+		//Fehler
+		_assErr = true;
+	}
+
+	//Namen eintragen
+	cl->setName( $1 );
+
+	//Adresse im DATA-Segemnt eintragen
+	cl->setAdress( _dataAdress );
+
+	//in Label-Array eintragen
+	_labelArray.push_back( cl );
+\}
+		;
+
+
+numList
+	->	'NUMBER'
+\{
+
+
+	/*
+		Die Wertebereichs-Prüfung ist schlecht gemacht, denn ein gescannter Wert
+		wird eh in ein unsigned long gespeichert. Da gibt es dann bzgl. long
+		keine Überläufe. Mit float und double ist dies auch ungünstig, denn
+		es wird dann immer ein float und double in ein unsigned long gewandelt.
+		Besser wäre es wohl, alles als double zurückzugeben.
+	*/
+
+
+	//Werte-Bereichs-Überprüfung
+	switch( _CDCDataDATA->getInternType() )
+	{
+		case CDCData::_CDCDataByte:
+		{
+			//.dc.b
+			if( static_cast<unsigned char>( $1 ) < numeric_limits<unsigned char>::max() )
+			{
+				//alles OK, eintragen
+				CDCDataByte	*tmp = dynamic_cast<CDCDataByte *>( _CDCDataDATA );
+
+				//eintragen
+				tmp->insertElement( $1 );
+			}
+
+			else
+				//Überlauf
+				std::cerr << "ssass: Line " << SSLR_line << ": char overflow!" << std::endl;
+
+			break;
+		}
+
+		case CDCData::_CDCDataWord:
+		{
+			//.dc.w
+			if( static_cast<unsigned short>( $1 ) < numeric_limits<unsigned short>::max() )
+			{
+				//alles OK, eintragen
+				CDCDataWord	*tmp = dynamic_cast<CDCDataWord *>( _CDCDataDATA );
+
+				//eintragen
+				tmp->insertElement( $1 );
+			}
+
+			else
+				//Überlauf
+				std::cerr << "ssass: Line " << SSLR_line << ": word overflow!" << std::endl;
+
+			break;
+		}
+
+		case CDCData::_CDCDataLong:
+		{
+			//.dc.l
+			if( static_cast<unsigned long>( $1 ) < numeric_limits<unsigned long>::max() )
+			{
+				//alles OK, eintragen
+				CDCDataLong	*tmp = dynamic_cast<CDCDataLong *>( _CDCDataDATA );
+
+				//eintragen
+				tmp->insertElement( $1 );
+			}
+
+			else
+				//Überlauf
+				std::cerr << "ssass: Line " << SSLR_line << ": long overflow!" << std::endl;
+
+			break;
+		}
+
+		case CDCData::_CDCDataSingle:
+		{
+			//.dc.s
+			if( static_cast<float>( $1 ) < numeric_limits<float>::max() )
+			{
+				//alles OK, eintragen
+				CDCDataSingle	*tmp = dynamic_cast<CDCDataSingle *>( _CDCDataDATA );
+
+				//eintragen
+				tmp->insertElement( $1 );
+			}
+
+			else
+				//Überlauf
+				std::cerr << "ssass: Line " << SSLR_line << ": float overflow!" << std::endl;
+
+			break;
+		}
+
+		case CDCData::_CDCDataDouble:
+		{
+			//.dc.d
+			if( static_cast<double>( $1 ) < numeric_limits<double>::max() )
+			{
+				//alles OK, eintragen
+				CDCDataDouble	*tmp = dynamic_cast<CDCDataDouble *>( _CDCDataDATA );
+
+				//eintragen
+				tmp->insertElement( $1 );
+			}
+
+			else
+				//Überlauf
+				std::cerr << "ssass: Line " << SSLR_line << ": double overflow!" << std::endl;
+
+			break;
+		}
+
+		default:
+		{
+			//Fehler
+			std::cerr << "ssass: Line " << SSLR_line << ": Unknown .dc directive!" << std::endl;
+
+			//Fehler
+			_assErr = true;
+			break;
+		}
+	}
+\}
+	|	numList 'COMMA' 'NUMBER'
+\{
+	/*
+		Die Wertebereichs-Prüfung ist schlecht gemacht, denn ein gescannter Wert
+		wird eh in ein unsigned long gespeichert. Da gibt es dann bzgl. long
+		keine Überläufe. Mit float und double ist dies auch ungünstig, denn
+		es wird dann immer ein float und double in ein unsigned long gewandelt.
+		Besser wäre es wohl, alles als double zurückzugeben.
+	*/
+
+
+	//Werte-Bereichs-Überprüfung
+	switch( _CDCDataDATA->getInternType() )
+	{
+		case CDCData::_CDCDataByte:
+		{
+			//.dc.b
+			if( static_cast<unsigned char>( $3 ) < numeric_limits<unsigned char>::max() )
+			{
+				//alles OK, eintragen
+				CDCDataByte	*tmp = dynamic_cast<CDCDataByte *>( _CDCDataDATA );
+
+				//eintragen
+				tmp->insertElement( $3 );
+			}
+
+			else
+				//Überlauf
+				std::cerr << "ssass: Line " << SSLR_line << ": char overflow!" << std::endl;
+
+			break;
+		}
+
+		case CDCData::_CDCDataWord:
+		{
+			//.dc.w
+			if( static_cast<unsigned short>( $3 ) < numeric_limits<unsigned short>::max() )
+			{
+				//alles OK, eintragen
+				CDCDataWord	*tmp = dynamic_cast<CDCDataWord *>( _CDCDataDATA );
+
+				//eintragen
+				tmp->insertElement( $3 );
+			}
+
+			else
+				//Überlauf
+				std::cerr << "ssass: Line " << SSLR_line << ": word overflow!" << std::endl;
+
+			break;
+		}
+
+		case CDCData::_CDCDataLong:
+		{
+			//.dc.l
+			if( static_cast<unsigned long>( $3 ) < numeric_limits<unsigned long>::max() )
+			{
+				//alles OK, eintragen
+				CDCDataLong	*tmp = dynamic_cast<CDCDataLong *>( _CDCDataDATA );
+
+				//eintragen
+				tmp->insertElement( $3 );
+			}
+
+			else
+				//Überlauf
+				std::cerr << "ssass: Line " << SSLR_line << ": long overflow!" << std::endl;
+
+			break;
+		}
+
+		case CDCData::_CDCDataSingle:
+		{
+			//.dc.s
+			if( static_cast<float>( $3 ) < numeric_limits<float>::max() )
+			{
+				//alles OK, eintragen
+				CDCDataSingle	*tmp = dynamic_cast<CDCDataSingle *>( _CDCDataDATA );
+
+				//eintragen
+				tmp->insertElement( $3 );
+			}
+
+			else
+				//Überlauf
+				std::cerr << "ssass: Line " << SSLR_line << ": float overflow!" << std::endl;
+
+			break;
+		}
+
+		case CDCData::_CDCDataDouble:
+		{
+			//.dc.d
+			if( static_cast<double>( $3 ) < numeric_limits<double>::max() )
+			{
+				//alles OK, eintragen
+				CDCDataDouble	*tmp = dynamic_cast<CDCDataDouble *>( _CDCDataDATA );
+
+				//eintragen
+				tmp->insertElement( $3 );
+			}
+
+			else
+				//Überlauf
+				std::cerr << "ssass: Line " << SSLR_line << ": double overflow!" << std::endl;
+
+			break;
+		}
+
+		default:
+		{
+			//Fehler
+			std::cerr << "ssass: Line " << SSLR_line << ": Unknown .dc directive!" << std::endl;
+
+			//Fehler
+			_assErr = true;
+			break;
+		}
+	}
+\}
+	;
+
+
+section4
+		->	'EPSILON'
+		;
+
+
+adrMode
+		->	'DATA_REG'
+\{
+	//Data Register Direct
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_DRD );
+
+	//Nummer des Datenregisters eintragen
+	_adrMode->setDataRegister( $1 );
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		|	'ADRESS_REG'
+\{
+	//Adress Register Direct
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_ARD );
+
+	//Nummer des Adressregisters eintragen
+	_adrMode->setAdressRegister( $1 );
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		|	'SR'
+\{
+	//Status Register
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_SR );
+
+	//Status Register
+	_adrMode->setSR();
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		|	'KLOPEN' 'ADRESS_REG' 'KLCLOSE'
+\{
+	//Adress Register Indirect
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_ARI );
+
+	//Nummer des Adressregisters eintragen
+	_adrMode->setAdressRegister( $2 );
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		|	'KLOPEN' 'ADRESS_REG' 'KLCLOSE' 'PLUS'
+\{
+	//Adress Register Indirect with Postincrement
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_ARIPOST );
+
+	//Nummer des Adressregisters eintragen
+	_adrMode->setAdressRegister( $2 );
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		|	'MINUS' 'KLOPEN' 'ADRESS_REG' 'KLCLOSE'
+\{
+	//Adress Register Indirect with Predecrement
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_ARIPRE );
+
+	//Nummer des Adressregisters eintragen
+	_adrMode->setAdressRegister( $3 );
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		|	'NUMBER' 'KLOPEN' 'ADRESS_REG' 'KLCLOSE'
+\{
+	//Adress Register Indirect with Displacement
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_ARID );
+
+	//Nummer des Adressregisters eintragen
+	_adrMode->setAdressRegister( $3 );
+
+	//Displacement eintragen
+	_adrMode->setDisplacement( $1 );
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		|	'NAME' 'KLOPEN' 'ADRESS_REG' 'KLCLOSE'
+\{
+	CLabel	*cl;
+
+	//Adress Register Indirect with Displacement
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_ARID );
+
+	//Nummer des Adressregisters eintragen
+	_adrMode->setAdressRegister( $3 );
+
+	//Displacement wurde als Label angegeben
+	if( cl = findLabel( $1 ) )
+		//Displacement eintragen
+		_adrMode->setDisplacement( cl );
+
+	else
+	{
+		//Label erzeugen
+		cl = new CLabel();
+
+		//Namen eintragen
+		cl->setName( $1 );
+
+		//Displacement eintragen
+		_adrMode->setDisplacement( cl );
+	}
+
+	//Label wird benutzt
+	cl->setUsed();
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		|	'NUMBER' 'KLOPEN' 'PC' 'KLCLOSE'
+\{
+	//Program Counter Indirect with Displacement
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_PCID );
+
+	//Programm Counter
+	_adrMode->setPC();
+
+	//Displacement eintragen
+	_adrMode->setDisplacement( $1 );
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		|	'NAME' 'KLOPEN' 'PC' 'KLCLOSE'
+\{
+	CLabel	*cl;
+
+	//Program Counter Indirect with Displacement
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_PCID );
+
+	//Programm Counter
+	_adrMode->setPC();
+
+	//Displacement wurde als Label angegeben
+	if( cl = findLabel( $1 ) )
+		//Displacement eintragen
+		_adrMode->setDisplacement( cl );
+
+	else
+	{
+		//Label erzeugen
+		cl = new CLabel();
+
+		//Namen eintragen
+		cl->setName( $1 );
+
+		//Displacement eintragen
+		_adrMode->setDisplacement( cl );
+	}
+
+	//Label wird benutzt
+	cl->setUsed();
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		|	'SHARP' 'NUMBER'
+\{
+	//Immediate Data
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_ID );
+
+	//Displacement eintragen
+	_adrMode->setDisplacement( $2 );
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		|	'SHARP' 'NAME'
+\{
+	CLabel	*cl;
+
+	//Immediate Data
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_ID );
+
+	//Displacement wurde als Label angegeben
+	if( cl = findLabel( $2 ) )
+		//Displacement eintragen
+		_adrMode->setDisplacement( cl );
+
+	else
+	{
+		//Label erzeugen
+		cl = new CLabel();
+
+		//Namen eintragen
+		cl->setName( $2 );
+
+		//Displacement eintragen
+		_adrMode->setDisplacement( cl );
+	}
+
+	//Label wird benutzt
+	cl->setUsed();
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		|	'NAME' extSize
+\{
+	CLabel	*cl;
+
+	//Absolute Adressing
+	CAdressingMode	*_adrMode = new CAdressingMode( CAdressingMode::_AA );
+
+	//Displacement wurde als Label angegeben
+	if( cl = findLabel( $1 ) )
+		//Displacement eintragen
+		_adrMode->setDisplacement( cl );
+
+	else
+	{
+		//Label erzeugen
+		cl = new CLabel();
+
+		//Namen eintragen
+		cl->setName( $1 );
+
+		//in Label-Array eintragen
+		_labelArray.push_back( cl );
+
+		//Displacement eintragen
+		_adrMode->setDisplacement( cl );
+	}
+
+	//Label wird benutzt
+	cl->setUsed();
+
+	//Extension angegeben?
+	if( $2 != COpcode::_NOEXT )
+		//ja, wird ignoriert
+		std::cerr << "ssass: Line " << SSLR_line << ": Extension in absolute adressing ignored!" << std::endl;
+
+	//zurückgeben
+	$$ = _adrMode;
+\}
+		;
+
+
+
+
+%extensions
+\{
+
+void SSLRParser::init( void )
+{
+	//initialisieren
+}
+
+
+void SSLRParser::deinit( void )
+{
+	//deinitialisieren
+}
+
+
+void SSLRParser::giveArgs( ARGV_STR *_argvStr )
+{
+	//dem Parser einige Variablen übergeben
+
+	//Command line arguments
+	argvStr = _argvStr;
+}
+
+
+CLabel *SSLRParser::findLabel( const char *name )
+{
+	//prüft, ob das Label bereits eingetragen wurde
+	unsigned int	anz = _labelArray.size(), i;
+
+	//alle bisher eingetragenen Labels checken
+	for( i = 0; i < anz; i++ )
+	{
+		//Namen vergleichen
+		if( !strcmp( name, _labelArray[i]->getName() ) )
+			//gleich
+			return( _labelArray[i] );
+	}
+
+	//war noch nicht deklariert
+	return( 0L );
+}
+
+
+void SSLRParser::insertLabels( void )
+{
+	//hier wird die Adresse eines Labels in die Opcodes eingetragen
+	COneOperandOpcode	*one;
+	CTwoOperandOpcode	*two;
+	unsigned int		anz = _opcodeArray.size(), i;
+	COpcode				*op;
+
+
+	/*
+		An dieser Stelle sind die Adressen der Label bekannt.
+		Außnahme: die import-Labels werden erst beim Linken zugänglich.
+		Die Offsets, die sich aus der Position der Opcodes und des jeweiligen
+		Labels ergeben, nun in die Opcodes eintragen.
+	*/
+
+
+	//alle Opcodes prüfen
+	for( i = 0; i < anz; i++ )
+	{
+		//Zeiger auf Opcode
+		op = _opcodeArray[i];
+
+		//Opcode mit einer Adressierungsart?
+		if( op->getInternType() == COpcode::_CONE )
+		{
+			//casten
+			one = dynamic_cast<COneOperandOpcode *>( op );
+
+			/*
+				prüfen, ob die zugehörige Adressierungsart mit Displacement ist
+				und ob es schon eingetragen wurde
+			*/
+			one->setDispAdress();
+		}
+
+		//Opcode mit zwei Adressierungsarten?
+		if( op->getInternType() == COpcode::_CTWO )
+		{
+			//casten
+			two = dynamic_cast<CTwoOperandOpcode *>( op );
+
+			/*
+				prüfen, ob die zugehörige Adressierungsart von Quelle und Ziel
+				mit Displacement ist und ob es schon eingetragen wurde
+			*/
+			two->setDispAdress();
+		}
+	}
+}
+
+
+void SSLRParser::checkLabel( void )
+{
+	//prüft alle Labels auf korrekte Verwendung
+	unsigned long	line;
+	unsigned int	anz = _labelArray.size(), i;
+	const char		*name;
+	CLabel			*cl;
+
+	//alle bisher eingetragenen Labels checken
+	for( i = 0; i < anz; i++ )
+	{
+		//Zeiger holen
+		cl = _labelArray[i];
+
+		//den Namen des Labels holen
+		name = cl->getName();
+
+		//Zeile holen
+		line = cl->getLine();
+
+		//wurde das Label definiert?
+		if( cl->getDefined() == false )
+		{
+			/*
+				Nein, wurde es nicht. Das darf nur passieren, wenn das Label als
+				.import deklariert wurde.
+			*/
+			if( cl->isImport() == false )
+			{
+				//Label nicht definiert
+				std::cerr << "ssass: Label " << name << " not defined!" << std::endl;
+
+				//Fehler
+				_assErr = true;
+			}
+		}
+
+		/*
+			Das Label wurde im aktuellen Modul definiert. Wenn es nun als
+			.import deklariert wurde, dann liegt ein Fehler vor!
+		*/
+		else if( cl->isImport() == true )
+		{
+			//Label definiert und es soll importiert werden
+			std::cerr << "ssass: Line " << line << ": Label " << name << " defined in this module and declared as import!" << std::endl;
+
+			//Fehler
+			_assErr = true;
+		}
+
+		//wurde das Label überhaupt benutzt?
+		if( cl->isUsed() == false )
+			//Label wird gar nicht benutzt
+			std::cerr << "ssass: Line " << line << ": Label " << name << " never used!" << std::endl;
+	}
+}
+
+
+void SSLRParser::insertOpcode( COpcode *op, long line )
+{
+	//eine COpcode-Klasse ins Array eintragen und Adressen etc. setzen
+
+	//Zeile eintragen
+	op->setLine( line );
+
+	//Adresse des Opcodes setzen
+	op->setAdress( _opcodeAdress );
+
+	//Größe des assemblierten Opcodes in Bytes
+	_opcodeAdress += op->getSize();
+
+	//in Array eintragen
+	_opcodeArray.push_back( op );
+
+	//assemblierte Opcodes zählen
+	_opcodeCnt++;
+}
+
+
+void SSLRParser::fillOpcodeFixStruct( void )
+{
+	/*
+		Opcodes, die per .import auf externe Labels zugreifen, können erst
+		vom Linker verarbeitet werden, weil jetzt die Adresse noch gar nicht
+		bekannt sein kann. Dazu wird eine Struktur aufgefüllt, die alle nötigen
+		Informationen enthält und im Objektfile hinter den Opcodes aufgelistet
+		wird, so dass der Linker SSLINK problemlos darauf zugreifen kann.
+	*/
+	struct _opcodeFixStruct	tmp;
+	COneOperandOpcode		*one;
+	CTwoOperandOpcode		*two;
+	unsigned int			anz = _opcodeArray.size(), i;
+	const char				*name;
+	COpcode					*op;
+
+	//alle Opcodes prüfen
+	for( i = 0; i < anz; i++ )
+	{
+		//Zeiger auf Opcode
+		op = _opcodeArray[i];
+
+		//Opcode mit einer Adressierungsart?
+		if( op->getInternType() == COpcode::_CONE )
+		{
+			//casten
+			one = dynamic_cast<COneOperandOpcode *>( op );
+
+			/*
+				prüfen, ob die zugehörige Adressierungsart mit Label als Displacement ist
+				und ob es als .import deklariert wurde
+			*/
+			if( name = one->isLabelExtern() )
+			{
+				//ja, in Struktur eintragen
+
+				//Adresse des Opcodes eintragen, der auf das .import-Label zugreift
+				tmp._adr = one->getAdress() + one->getLabelOffset();
+
+				//Zeile, in der der Befehl im Modul steht
+				tmp._line = one->getLine();
+
+				//Name des Labels
+				tmp._labelName = name;
+
+				//in Array eintragen
+				_opcodeFixStr.push_back( tmp );
+			}
+		}
+
+		//Opcode mit zwei Adressierungsarten?
+		if( op->getInternType() == COpcode::_CTWO )
+		{
+			//casten
+			two = dynamic_cast<CTwoOperandOpcode *>( op );
+
+			/*
+				prüfen, ob die zugehörige Adressierungsart mit Label als Displacement ist
+				und ob es als .import deklariert wurde
+			*/
+			if( name = two->isSLabelExtern() )
+			{
+				//ja, in Struktur eintragen
+
+				//Adresse des Opcodes eintragen, der auf das .import-Label zugreift
+				tmp._adr = two->getAdress() + two->getLabelSOffset();
+
+				//Zeile, in der der Befehl im Modul steht
+				tmp._line = two->getLine();
+
+				//Name des Labels
+				tmp._labelName = name;
+
+				//in Array eintragen
+				_opcodeFixStr.push_back( tmp );
+			}
+
+			/*
+				prüfen, ob die zugehörige Adressierungsart mit Label als Displacement ist
+				und ob es als .import deklariert wurde
+			*/
+			if( name = two->isDLabelExtern() )
+			{
+				//ja, in Struktur eintragen
+
+				//Adresse des Opcodes eintragen, der auf das .import-Label zugreift
+				tmp._adr = two->getAdress() + two->getLabelDOffset();
+
+				//Zeile, in der der Befehl im Modul steht
+				tmp._line = two->getLine();
+
+				//Name des Labels
+				tmp._labelName = name;
+
+				//in Array eintragen
+				_opcodeFixStr.push_back( tmp );
+			}
+		}
+	}
+}
+
+
+void SSLRParser::fillExportLabelStruct( void )
+{
+	/*
+		Wenn dieses Modul Labels exportiert, also Labels per .export deklariert wurden,
+		dann deren Adresse, Zeile im Modul und den Namen exportieren.
+	*/
+	struct _exportLabelStruct	tmp;
+	unsigned int				anz = _labelArray.size(), i;
+	unsigned long				line;
+	const char					*name;
+	CLabel						*cl;
+
+	//alle bisher eingetragenen Labels checken
+	for( i = 0; i < anz; i++ )
+	{
+		//Zeiger holen
+		cl = _labelArray[i];
+
+		//den Namen des Labels holen
+		name = cl->getName();
+
+		//Zeile holen
+		line = cl->getLine();
+
+		/*
+			Das Label wurde im aktuellen Modul definiert. Wenn es nun als
+			.export deklariert wurde, dann in Struktur eintragen.
+		*/
+		if( cl->isExport() == true )
+		{
+			//Label soll exportiert werden
+
+			//Adresse des Opcodes eintragen, der auf das .import-Label zugreift
+			tmp._adr = cl->getAdress();
+
+			//Zeile, in der das Label definiert wurde
+			tmp._line = cl->getLine();
+
+			//Name des Labels
+			tmp._labelName = name;
+
+			//Name des Moduls, in dem das Label definiert wurde
+			tmp._fileName = 0L;
+
+			//in Array eintragen
+			_exportLabelStr.push_back( tmp );
+		}
+	}
+}
+
+
+void SSLRParser::fillHeader( void )
+{
+	//Header des Objektfiles erzeugen
+	string	_vers1( "Assembliert von SSASS V" );
+	string	_vers2( VERSION );
+	string	_vers3( "\n(c) 2005 by Sven Schmidt\n" );
+	string	_vers4( "s.schmidt@lboro.ac.uk\n" );
+	string	_vers = _vers1 + _vers2 + _vers3 + _vers4;
+
+	//Zeiger auf Header
+	struct _SSASSHeader	*header = &_header;
+
+	//Länge des Versionstextes
+	unsigned short _vL = strlen( _vers.c_str() + 1 );
+
+	//in Textform
+	char *_v = new( char[_vL] );
+
+	//Länge des Versionsstrings
+	header->_versionLength = _vL;
+
+	//Versionstring eintragen
+	header->_version = strcpy( _v, _vers.c_str() );
+
+	//Länge des Modulnamens
+	header->_fileNameLength = strlen( moduleName ) + 1;
+
+	//Modulname
+	header->_fileName = moduleName;
+
+	//Länge des TEXT-Segments bestimmen
+	header->_textLength = _opcodeAdress;
+
+	//Beginn des Text-Segments ist das Ende des Headers
+	header->_text = sizeof( struct _SSASSHeader );
+
+	//Start des Data-Segemnts
+	header->_data = header->_text + header->_textLength;
+
+	//Länge des Data-Segments
+	header->_dataLength = 0;
+
+	//Start des Bss-Segemnts
+	header->_bss = header->_data + header->_dataLength;
+
+	//Länge des Bss-Segments
+	header->_bssLength = 0;
+
+	//Start der Opcodes, deren Labels angepasst werden müssen
+	header->_opcodeFix = header->_bss + header->_bssLength;
+
+	//Länge dieses Bereichs
+	header->_opcodeFixLength = _opcodeFixStr.size() * sizeof( struct _opcodeFixStruct );
+
+	//Start der zu exportierenden Labels
+	header->_exportLabel = header->_opcodeFix + header->_opcodeFixLength;
+
+	//Länge dieses Bereichs
+	header->_exportLabelLength = _exportLabelStr.size() * sizeof( struct _exportLabelStruct );
+}
+
+
+void SSLRParser::writeObjectFile( void )
+{
+	//Objekt-File ausgeben
+//	ofstream		file2( argv_str->outputFileName );
+	COneOperandOpcode	*one;
+	CTwoOperandOpcode	*two;
+	CNoOperandOpcode	*no;
+	unsigned long		i;
+	ofstream			file( "/home/sschmidt/ssass.o" );
+	COpcode				*op;
+	CDCData				*cdc;
+
+	//Meldung
+	std::cout << "ssass: Writing object file..." << std::endl;
+
+	//Zeiger auf den Header
+	struct _SSASSHeader	*header = &_header;
+
+	//den Header schreiben
+	file.write( ( char * ) &header->_versionLength, sizeof( unsigned short ) );
+	file.write( ( char * ) header->_version, sizeof( char ) * strlen( header->_version ) );
+	file.write( ( char * ) &header->_fileNameLength, sizeof( unsigned short ) );
+	file.write( ( char * ) header->_fileName, sizeof( char ) * strlen( header->_fileName ) );
+	file.write( ( char * ) &header->_textLength, sizeof( long ) );
+	file.write( ( char * ) &header->_text, sizeof( long ) );
+	file.write( ( char * ) &header->_data, sizeof( long ) );
+	file.write( ( char * ) &header->_dataLength, sizeof( long ) );
+	file.write( ( char * ) &header->_bss, sizeof( long ) );
+	file.write( ( char * ) &header->_bssLength, sizeof( long ) );
+	file.write( ( char * ) &header->_opcodeFix, sizeof( long ) );
+	file.write( ( char * ) &header->_opcodeFixLength, sizeof( long ) );
+	file.write( ( char * ) &header->_exportLabel, sizeof( long ) );
+	file.write( ( char * ) &header->_exportLabelLength, sizeof( long ) );
+
+	//nun die Opcodes ausgeben
+	for( i = 0; i < _opcodeArray.size(); i++ )
+	{
+		//Zeiger auf Opcode
+		op = _opcodeArray[i];
+
+		//Opcode ohne Adressierungsart?
+		if( op->getInternType() == COpcode::_CNO )
+		{
+			//casten
+			no = dynamic_cast<CNoOperandOpcode *>( op );
+
+			//ausgeben
+			file << *no;
+		}
+
+		//Opcode mit einer Adressierungsart?
+		else if( op->getInternType() == COpcode::_CONE )
+		{
+			//casten
+			one = dynamic_cast<COneOperandOpcode *>( op );
+
+			//ausgeben
+			file << *one;
+		}
+
+		//Opcode mit zwei Adressierungsarten?
+		else if( op->getInternType() == COpcode::_CTWO )
+		{
+			//casten
+			two = dynamic_cast<CTwoOperandOpcode *>( op );
+
+			//ausgeben
+			file << *two;
+		}
+	}
+
+
+	//nun das DATA-Segment ausgeben
+	for( i = 0; i < _CDCDataArray.size(); i++ )
+	{
+		//Zeiger auf _CDCData-Klasse
+		cdc = _CDCDataArray[i];
+
+		//.dc.b?
+		if( cdc->getInternType() == CDCData::_CDCDataByte )
+		{
+			//casten
+			CDCDataByte *byte = dynamic_cast<CDCDataByte *>( cdc );
+
+			//ausgeben
+			file << *byte;
+		}
+
+		//.dc.w?
+		else if( cdc->getInternType() == CDCData::_CDCDataWord )
+		{
+			//casten
+			CDCDataWord *byte = dynamic_cast<CDCDataWord *>( cdc );
+
+			//ausgeben
+			file << *byte;
+		}
+
+		//.dc.l?
+		else if( cdc->getInternType() == CDCData::_CDCDataLong )
+		{
+			//casten
+			CDCDataLong *byte = dynamic_cast<CDCDataLong *>( cdc );
+
+			//ausgeben
+			file << *byte;
+		}
+
+		//.dc.s?
+		else if( cdc->getInternType() == CDCData::_CDCDataSingle )
+		{
+			//casten
+			CDCDataSingle *byte = dynamic_cast<CDCDataSingle *>( cdc );
+
+			//ausgeben
+			file << *byte;
+		}
+
+		//.dc.w?
+		else if( cdc->getInternType() == CDCData::_CDCDataDouble )
+		{
+			//casten
+			CDCDataDouble *byte = dynamic_cast<CDCDataDouble *>( cdc );
+
+			//ausgeben
+			file << *byte;
+		}
+	}
+}
+
+
+
+\}
+

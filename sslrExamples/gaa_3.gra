@@ -1,0 +1,16 @@
+/*
+	Grammatik aus dem Drachen S. 302
+*/
+
+%definition
+
+%left ADD SUB
+%left MUL DIV
+
+%grammar
+
+expr	:	expr 'ADD' expr
+		|	expr 'MUL' expr
+		|	'KLOPEN' expr 'KLCLOSE'
+		|	'IDENT'
+		;
